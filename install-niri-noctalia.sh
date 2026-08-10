@@ -226,7 +226,30 @@ EOF
 
 sudo systemctl enable greetd.service
 
-# ── 8. niri config: wire in Noctalia + recommended settings ─────────────
+# ── 8. User Configurations from GitHub ────────────────────────────────────
+log "Cloning repository and copying niri and fastfetch configurations..."
+TMP_REPO=$(mktemp -d)
+git clone --depth 1 https://github.com/opaleiei/opalnirinoctalia.git "$TMP_REPO"
+
+mkdir -p "$HOME/.config"
+
+if [[ -d "$TMP_REPO/niri" ]]; then
+  cp -r "$TMP_REPO/niri" "$HOME/.config/"
+  log "Successfully copied niri config."
+else
+  warn "niri folder not found in the repository."
+fi
+
+if [[ -d "$TMP_REPO/fastfetch" ]]; then
+  cp -r "$TMP_REPO/fastfetch" "$HOME/.config/"
+  log "Successfully copied fastfetch config."
+else
+  warn "fastfetch folder not found in the repository."
+fi
+
+rm -rf "$TMP_REPO"
+
+# ── 9. niri config: wire in Noctalia + recommended settings ─────────────
 NIRI_CFG_DIR="$HOME/.config/niri"
 NIRI_CFG="$NIRI_CFG_DIR/config.kdl"
 mkdir -p "$NIRI_CFG_DIR"
@@ -298,7 +321,7 @@ binds {
 EOF
 fi
 
-# ── 9. Done ────────────────────────────────────────────────────────────
+# ── 10. Done ────────────────────────────────────────────────────────────
 log "Install complete."
 cat <<EOF
 
