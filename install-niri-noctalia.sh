@@ -29,7 +29,24 @@ die()  { echo -e "\033[1;31mERROR:\033[0m $*" >&2; exit 1; }
 command -v sudo >/dev/null 2>&1 || die "sudo is not installed. Install it first: su -c 'pacman -S sudo' then add your user to the wheel group."
 command -v pacman >/dev/null 2>&1 || die "This script is for Arch Linux (pacman not found)."
 
-# ── 0. Base tooling ──────────────────────────────────────────────────────
+# ── Authenticate sudo upfront and keep it alive ──────────────────────────
+log "Authenticating sudo upfront for an unattended installation..."
+sudo -v
+
+# Keep-alive: update existing sudo time stamp until script has finished
+while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
+
+# ── 0. Base tooling, Timezone, and Locale ────────────────────────────────
+log "Setting timezone to Asia/Bangkok (Thailand)..."
+sudo ln -sf /usr/share/zoneinfo/Asia/Bangkok /etc/localtime
+sudo hwclock --systohc || true
+
+log "Generating en_US and th_TH locales..."
+sudo sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+sudo sed -i 's/^#th_TH.UTF-8 UTF-8/th_TH.UTF-8 UTF-8/' /etc/locale.gen
+sudo locale-gen
+echo "LANG=en_US.UTF-8" | sudo tee /etc/locale.conf >/dev/null
+
 log "Syncing package databases and updating system..."
 sudo pacman -Syu --needed --noconfirm
 
@@ -246,8 +263,8 @@ EOF
 
 sudo systemctl enable greetd.service
 
-# ── 8. Shell and Terminal Utilities ───────────────────────────────────────
-log "Installing zsh, starship, and terminal utilities..."
+# ── 8. Shell, Terminal Utilities, and Extra Apps ──────────────────────────
+log "Installing zsh, terminal utilities, Zen Browser, and FFmpeg 4.4..."
 "$AUR_HELPER" -S --needed --noconfirm \
   zsh \
   starship \
@@ -260,7 +277,9 @@ log "Installing zsh, starship, and terminal utilities..."
   zoxide \
   eza \
   bat \
-  atuin
+  atuin \
+  zen-browser-bin \
+  ffmpeg4.4
 
 log "Changing default shell to zsh..."
 sudo chsh -s "$(command -v zsh)" "$USER" || warn "Failed to automatically change shell. You may need to run 'chsh -s $(command -v zsh)' manually later."
@@ -300,19 +319,17 @@ log "Install complete."
 cat <<EOF
 
 Next steps:
-  1. Reboot — required for the NVIDIA kernel modules and the
+  1. Reboot — required for the NVIDIA kernel modules, locales, and the
      nvidia-drm.modeset=1 parameter to take effect.
   2. Noctalia Greeter appears at login. Press F3 to pick the "niri" session
      if it isn't already selected, then log in.
   3. Noctalia starts automatically after login. Open its settings with
      Mod+Comma to pick a theme, wallpaper, and bar modules.
-  4. Keybinds added: Mod+Space (launcher), Mod+S (control center),
-     Mod+Comma (settings).
-  5. To make the login screen match your desktop (wallpaper, palette,
+  4. To make the login screen match your desktop (wallpaper, palette,
      font), go to Settings → Security → Noctalia Greeter → Sync Now
      inside Noctalia (needs a polkit agent / pkexec).
-  6. Your niri config lives at: ~/.config/niri/config.kdl
-  7. Your shell has been changed to zsh. Log out or reboot for it to take effect.
+  5. Your niri config lives at: ~/.config/niri/config.kdl
+  6. Your shell has been changed to zsh.
 
 Verify NVIDIA after reboot with:
   nvidia-smi
