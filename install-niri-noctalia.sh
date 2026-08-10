@@ -226,8 +226,27 @@ EOF
 
 sudo systemctl enable greetd.service
 
-# ── 8. User Configurations from GitHub ────────────────────────────────────
-log "Cloning repository and copying niri and fastfetch configurations..."
+# ── 8. Shell and Terminal Utilities ───────────────────────────────────────
+log "Installing zsh, starship, and terminal utilities..."
+"$AUR_HELPER" -S --needed --noconfirm \
+  zsh \
+  starship \
+  zsh-autosuggestions \
+  zsh-syntax-highlighting \
+  zsh-completions \
+  zsh-history-substring-search \
+  fzf \
+  fzf-tab \
+  zoxide \
+  eza \
+  bat \
+  atuin
+
+log "Changing default shell to zsh..."
+sudo chsh -s "$(command -v zsh)" "$USER" || warn "Failed to automatically change shell. You may need to run 'chsh -s $(command -v zsh)' manually later."
+
+# ── 9. User Configurations from GitHub ────────────────────────────────────
+log "Cloning repository and copying niri, fastfetch, and .zshrc configurations..."
 TMP_REPO=$(mktemp -d)
 git clone --depth 1 https://github.com/opaleiei/opalnirinoctalia.git "$TMP_REPO"
 
@@ -247,8 +266,14 @@ else
   warn "fastfetch folder not found in the repository."
 fi
 
-rm -rf "$TMP_REPO"
+if [[ -f "$TMP_REPO/.zshrc" ]]; then
+  cp "$TMP_REPO/.zshrc" "$HOME/.zshrc"
+  log "Successfully copied .zshrc."
+else
+  warn ".zshrc not found in the repository."
+fi
 
+rm -rf "$TMP_REPO"
 
 # ── 10. Done ────────────────────────────────────────────────────────────
 log "Install complete."
@@ -266,7 +291,8 @@ Next steps:
   5. To make the login screen match your desktop (wallpaper, palette,
      font), go to Settings → Security → Noctalia Greeter → Sync Now
      inside Noctalia (needs a polkit agent / pkexec).
-  6. Your niri config lives at: $NIRI_CFG
+  6. Your niri config lives at: ~/.config/niri/config.kdl
+  7. Your shell has been changed to zsh. Log out or reboot for it to take effect.
 
 Verify NVIDIA after reboot with:
   nvidia-smi
