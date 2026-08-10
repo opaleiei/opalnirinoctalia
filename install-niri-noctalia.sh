@@ -123,6 +123,7 @@ sudo pacman -S --needed --noconfirm \
   dbus \
   accountsservice \
   fastfetch-git \
+  bibata-cursor-theme \
   greetd
 
 # Icon theme (Noctalia looks much better with one installed)
