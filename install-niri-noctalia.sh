@@ -154,8 +154,28 @@ sudo sed -i -E \
   /etc/mkinitcpio.conf
 sudo mkinitcpio -P
 
+# Find Limine config (checking both old .cfg and new .conf extensions in common locations)
+LIMINE_CFG=""
+for cfg in \
+  /boot/limine.conf /boot/limine.cfg \
+  /boot/limine/limine.conf /boot/limine/limine.cfg \
+  /boot/EFI/BOOT/limine.conf /boot/EFI/BOOT/limine.cfg \
+  /boot/EFI/BOOT/limine/limine.conf /boot/EFI/BOOT/limine/limine.cfg \
+  /boot/efi/EFI/limine/limine.conf /boot/efi/EFI/limine/limine.cfg; do
+  if [[ -f "$cfg" ]]; then
+    LIMINE_CFG="$cfg"
+    break
+  fi
+done
+
 # Add the nvidia-drm.modeset=1 kernel parameter, whichever bootloader is in use.
-if [[ -d /boot/loader/entries ]]; then
+if [[ -n "$LIMINE_CFG" ]]; then
+  log "Adding nvidia-drm.modeset=1 to Limine ($LIMINE_CFG)..."
+  if ! grep -q "nvidia-drm.modeset=1" "$LIMINE_CFG"; then
+    # Appends to any line starting with cmdline, kernel_cmdline, KERNEL_CMDLINE, etc.
+    sudo sed -i -E 's/^([[:space:]]*(kernel_)?cmdline.*)/\1 nvidia-drm.modeset=1/i' "$LIMINE_CFG"
+  fi
+elif [[ -d /boot/loader/entries ]]; then
   log "Adding nvidia-drm.modeset=1 to systemd-boot entries..."
   for f in /boot/loader/entries/*.conf; do
     [[ -f "$f" ]] || continue
@@ -170,7 +190,7 @@ elif [[ -f /etc/default/grub ]] && command -v grub-mkconfig >/dev/null 2>&1; the
   fi
   sudo grub-mkconfig -o /boot/grub/grub.cfg
 else
-  warn "Could not detect systemd-boot or GRUB automatically — add 'nvidia-drm.modeset=1' to your kernel command line manually."
+  warn "Could not detect Limine, systemd-boot, or GRUB automatically — add 'nvidia-drm.modeset=1' to your kernel command line manually."
 fi
 
 # ── 5. Enable NetworkManager (minimal installs often lack a network daemon) ─
