@@ -277,6 +277,7 @@ log "Installing zsh, terminal utilities, Zen Browser, and FFmpeg 4.4..."
   bat \
   atuin \
   zen-browser-bin \
+  zed \
   ffmpeg4.4
 
 log "Changing default shell to zsh..."
