@@ -99,12 +99,13 @@ sudo pacman -S --needed --noconfirm \
   cliphist \
   grim \
   slurp \
-  kitty \
+  ghostty-git \
   ttf-nerd-fonts-symbols \
   noto-fonts \
   jemalloc \
   dbus \
   accountsservice \
+  fastfetch-git \
   greetd
 
 # Icon theme (Noctalia looks much better with one installed)
