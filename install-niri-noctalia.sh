@@ -262,7 +262,7 @@ EOF
 sudo systemctl enable greetd.service
 
 # ── 8. Shell, Terminal Utilities, and Extra Apps ──────────────────────────
-log "Installing zsh, terminal utilities, Zen Browser, and FFmpeg 4.4..."
+log "Installing zsh, terminal utilities, Zen Browser, FFmpeg 4.4, and Profile Sync Daemon..."
 "$AUR_HELPER" -S --needed --noconfirm \
   zsh \
   starship \
@@ -278,10 +278,22 @@ log "Installing zsh, terminal utilities, Zen Browser, and FFmpeg 4.4..."
   atuin \
   zen-browser-bin \
   zed \
-  ffmpeg4.4
+  ffmpeg4.4 \
+  profile-sync-daemon-zen
 
 log "Changing default shell to zsh..."
 sudo chsh -s "$(command -v zsh)" "$USER" || warn "Failed to automatically change shell. You may need to run 'chsh -s $(command -v zsh)' manually later."
+
+log "Configuring Profile Sync Daemon for Zen Browser..."
+mkdir -p "$HOME/.config/psd"
+cat > "$HOME/.config/psd/psd.conf" <<EOF
+# psd configuration - automatically generated
+USE_OVERLAYFS="yes"
+BROWSERS=("zen-browser")
+EOF
+
+# Enable psd.service for the normal user
+systemctl --user enable psd.service
 
 # ── 9. User Configurations from GitHub ────────────────────────────────────
 log "Cloning repository and copying niri, fastfetch, and .zshrc configurations..."
@@ -318,7 +330,7 @@ log "Install complete."
 cat <<EOF
 
 Next steps:
-  1. Reboot — required for the NVIDIA kernel modules, locales, and the
+  1. Reboot — required for the NVIDIA kernel modules, locales, Profile Sync Daemon, and the
      nvidia-drm.modeset=1 parameter to take effect.
   2. Noctalia Greeter appears at login. Press F3 to pick the "niri" session
      if it isn't already selected, then log in.
@@ -333,6 +345,9 @@ Next steps:
 Verify NVIDIA after reboot with:
   nvidia-smi
   cat /sys/module/nvidia_drm/parameters/modeset   # should print Y
+
+Verify Profile Sync Daemon after reboot with:
+  psd p
 
 If something fails to start, check logs with:
   journalctl --user -b | grep -i noctalia
