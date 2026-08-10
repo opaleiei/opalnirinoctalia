@@ -6,9 +6,6 @@
 # control center, lock screen) on a minimal Arch Linux install, plus
 # greetd + Noctalia Greeter as a matching login screen.
 #
-# Noctalia v5 is a native C++ binary, NOT the old Quickshell-based v4 line —
-# no quickshell/noctalia-qs dependency, no conflicts with either.
-#
 # Also installs the NVIDIA 580xx legacy driver branch (nvidia-580xx-dkms),
 # needed for Maxwell-era cards like the GTX 960 since Arch's official
 # nvidia/nvidia-open packages dropped Maxwell/Pascal support at driver 590.
