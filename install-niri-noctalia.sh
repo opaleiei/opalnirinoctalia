@@ -175,7 +175,8 @@ for cfg in \
   /boot/limine/limine.conf /boot/limine/limine.cfg \
   /boot/EFI/BOOT/limine.conf /boot/EFI/BOOT/limine.cfg \
   /boot/EFI/BOOT/limine/limine.conf /boot/EFI/BOOT/limine/limine.cfg \
-  /boot/efi/EFI/limine/limine.conf /boot/efi/EFI/limine/limine.cfg; do
+  /boot/efi/EFI/limine/limine.conf /boot/efi/EFI/limine/limine.cfg \
+  /boot/EFI/arch-limine/limine.config /boot/EFI/arch-limine/limine.conf /boot/EFI/arch-limine/limine.cfg; do
   if [[ -f "$cfg" ]]; then
     LIMINE_CFG="$cfg"
     break
