@@ -106,7 +106,6 @@ sudo pacman -S --needed --noconfirm \
   pipewire-alsa \
   wireplumber \
   networkmanager \
-  network-manager-applet \
   brightnessctl \
   playerctl \
   wl-clipboard \
