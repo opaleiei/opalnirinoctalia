@@ -104,7 +104,7 @@ OFFICIAL_PKGS=(
   pipewire pipewire-pulse pipewire-alsa wireplumber
   networkmanager network-manager-applet brightnessctl playerctl
   wl-clipboard cliphist grim slurp ttf-nerd-fonts-symbols noto-fonts
-  jemalloc dbus accountsservice greetd papirus-icon-theme ddcutil
+  jemalloc dbus accountsservice greetd papirus-icon-theme
   
   # Shell & CLI Utilities
   zsh starship zsh-autosuggestions zsh-syntax-highlighting zsh-completions
