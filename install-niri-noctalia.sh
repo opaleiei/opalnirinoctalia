@@ -134,6 +134,7 @@ AUR_PKGS=(
   ffmpeg4.4
   profile-sync-daemon-zen
   limine-mkinitcpio-hook
+  nautilus-admin-gtk4
 )
 
 "$AUR_HELPER" -S --needed --noconfirm "${AUR_PKGS[@]}"
