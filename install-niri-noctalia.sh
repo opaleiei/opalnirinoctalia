@@ -133,6 +133,7 @@ AUR_PKGS=(
   zed
   ffmpeg4.4
   profile-sync-daemon-zen
+  limine-mkinitcpio-hook
 )
 
 "$AUR_HELPER" -S --needed --noconfirm "${AUR_PKGS[@]}"
