@@ -104,7 +104,7 @@ OFFICIAL_PKGS=(
   pipewire pipewire-pulse pipewire-alsa wireplumber
   networkmanager network-manager-applet brightnessctl playerctl
   wl-clipboard cliphist grim slurp ttf-nerd-fonts-symbols noto-fonts
-  jemalloc dbus accountsservice greetd papirus-icon-theme
+  jemalloc dbus accountsservice greetd papirus-icon-theme ddcutil
   
   # Shell & CLI Utilities
   zsh starship zsh-autosuggestions zsh-syntax-highlighting zsh-completions
@@ -134,6 +134,7 @@ AUR_PKGS=(
   ffmpeg4.4
   profile-sync-daemon-zen
   limine-mkinitcpio-hook
+  nautilus-admin-gtk4
 )
 
 "$AUR_HELPER" -S --needed --noconfirm "${AUR_PKGS[@]}"
