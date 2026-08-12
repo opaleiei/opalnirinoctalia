@@ -2,13 +2,8 @@
 # install-niri-noctalia.sh
 #
 # Installs and configures niri (scrollable-tiling Wayland compositor) with
-# Noctalia v5 (standalone desktop shell — bar, launcher, notifications,
-# control center, lock screen) on a minimal Arch Linux install, plus
-# greetd + Noctalia Greeter as a matching login screen.
-#
-# Also installs the NVIDIA 580xx legacy driver branch (nvidia-580xx-dkms),
-# needed for Maxwell-era cards like the GTX 960 since Arch's official
-# nvidia/nvidia-open packages dropped Maxwell/Pascal support at driver 590.
+# Noctalia v5, greetd + Noctalia Greeter, NVIDIA 580xx legacy drivers,
+# Zsh terminal stack, Zen Browser with PSD, Docker, and KVM/virt-manager.
 #
 # Usage:
 #   chmod +x install-niri-noctalia.sh
@@ -22,38 +17,43 @@ log()  { echo -e "\033[1;32m==>\033[0m $*"; }
 warn() { echo -e "\033[1;33m!!\033[0m $*"; }
 die()  { echo -e "\033[1;31mERROR:\033[0m $*" >&2; exit 1; }
 
+# Guard checks
 [[ $EUID -eq 0 ]] && die "Run this as your normal user, not root. It will call sudo when needed."
-command -v sudo >/dev/null 2>&1 || die "sudo is not installed. Install it first: su -c 'pacman -S sudo' then add your user to the wheel group."
+command -v sudo >/dev/null 2>&1 || die "sudo is not installed. Add user to wheel group and install sudo first."
 command -v pacman >/dev/null 2>&1 || die "This script is for Arch Linux (pacman not found)."
+
+# Cleanup trap for temporary resources and background processes
+TMP_REPO=""
+SUDO_PID=""
+cleanup() {
+  [[ -n "$SUDO_PID" ]] && kill "$SUDO_PID" 2>/dev/null || true
+  [[ -n "$TMP_REPO" && -d "$TMP_REPO" ]] && rm -rf "$TMP_REPO"
+}
+trap cleanup EXIT
 
 # ── Authenticate sudo upfront and keep it alive ──────────────────────────
 log "Authenticating sudo upfront for an unattended installation..."
 sudo -v
+(while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done) 2>/dev/null &
+SUDO_PID=$!
 
-# Keep-alive: update existing sudo time stamp until script has finished
-while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
-
-# ── 0. Base tooling, Timezone, and Locale ────────────────────────────────
+# ── 0. Base System, Timezone, Locale & Tools ─────────────────────────────
 log "Setting timezone to Asia/Bangkok (Thailand)..."
 sudo ln -sf /usr/share/zoneinfo/Asia/Bangkok /etc/localtime
 sudo hwclock --systohc || true
 
-log "Generating en_US and th_TH locales..."
+log "Configuring locales (en_US.UTF-8, th_TH.UTF-8)..."
 sudo sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
 sudo sed -i 's/^#th_TH.UTF-8 UTF-8/th_TH.UTF-8 UTF-8/' /etc/locale.gen
 sudo locale-gen
 echo "LANG=en_US.UTF-8" | sudo tee /etc/locale.conf >/dev/null
 
-log "Syncing package databases and updating system..."
-sudo pacman -Syu --needed --noconfirm
+log "Updating system databases and base tools..."
+sudo pacman -Syu --needed --noconfirm base-devel git
 
-log "Installing base-devel and git..."
-sudo pacman -S --needed --noconfirm base-devel git
-
-# ── 1. Chaotic-AUR (prebuilt binary repo — makes paru and noctalia
-#      install instantly instead of compiling from source) ───────────────
+# ── 1. Chaotic-AUR (prebuilt binary repository) ─────────────────────────
 if ! grep -q "^\[chaotic-aur\]" /etc/pacman.conf 2>/dev/null; then
-  log "Enabling Chaotic-AUR (prebuilt binaries)..."
+  log "Enabling Chaotic-AUR..."
   sudo pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com
   sudo pacman-key --lsign-key 3056513887B78AEB
   sudo pacman -U --needed --noconfirm \
@@ -65,81 +65,80 @@ if ! grep -q "^\[chaotic-aur\]" /etc/pacman.conf 2>/dev/null; then
 [chaotic-aur]
 Include = /etc/pacman.d/chaotic-mirrorlist
 EOF
-
-  log "Syncing with Chaotic-AUR..."
   sudo pacman -Sy
 else
-  log "Chaotic-AUR already enabled, skipping."
+  log "Chaotic-AUR already enabled."
 fi
 
-# ── 2. AUR helper (paru) — pulled as a prebuilt binary from Chaotic-AUR ──
-if ! command -v paru >/dev/null 2>&1; then
-  if command -v yay >/dev/null 2>&1; then
-    log "yay already installed, using it as the AUR helper."
-    AUR_HELPER=yay
-  else
-    log "Installing paru..."
-    if ! sudo pacman -S --needed --noconfirm paru; then
-      warn "paru not available as a binary, building it from the AUR instead..."
-      tmpdir=$(mktemp -d)
-      git clone --depth 1 https://aur.archlinux.org/paru-bin.git "$tmpdir/paru-bin"
-      (cd "$tmpdir/paru-bin" && makepkg -si --noconfirm)
-      rm -rf "$tmpdir"
-    fi
-    AUR_HELPER=paru
-  fi
+# ── 2. AUR Helper Setup (paru / yay) ────────────────────────────────────
+if command -v paru >/dev/null 2>&1; then
+  AUR_HELPER=paru
+elif command -v yay >/dev/null 2>&1; then
+  AUR_HELPER=yay
 else
+  log "Installing paru..."
+  if ! sudo pacman -S --needed --noconfirm paru; then
+    warn "Building paru-bin from AUR fallback..."
+    tmpdir=$(mktemp -d)
+    git clone --depth 1 https://aur.archlinux.org/paru-bin.git "$tmpdir/paru-bin"
+    (cd "$tmpdir/paru-bin" && makepkg -si --noconfirm)
+    rm -rf "$tmpdir"
+  fi
   AUR_HELPER=paru
 fi
 log "Using AUR helper: $AUR_HELPER"
 
-# ── 3. Core Wayland / niri stack (official repos) ────────────────────────
-log "Installing niri and the Wayland session stack..."
-sudo pacman -S --needed --noconfirm \
-  niri \
-  xwayland-satellite \
-  xdg-desktop-portal \
-  xdg-desktop-portal-gnome \
-  polkit \
-  pipewire \
-  pipewire-pulse \
-  pipewire-alsa \
-  wireplumber \
-  networkmanager \
-  brightnessctl \
-  playerctl \
-  wl-clipboard \
-  cliphist \
-  grim \
-  slurp \
-  ghostty-git \
-  ttf-nerd-fonts-symbols \
-  noto-fonts \
-  jemalloc \
-  dbus \
-  accountsservice \
-  fastfetch-git \
-  bibata-cursor-theme \
-  greetd
+# Helper function to install packages via pacman or fallback to AUR helper
+install_pkgs() {
+  local pkgs=("$@")
+  if ! sudo pacman -S --needed --noconfirm "${pkgs[@]}" 2>/dev/null; then
+    "$AUR_HELPER" -S --needed --noconfirm "${pkgs[@]}"
+  fi
+}
 
-# Icon theme (Noctalia looks much better with one installed)
-sudo pacman -S --needed --noconfirm papirus-icon-theme || warn "papirus-icon-theme not found, skipping."
+# ── 3. Core Desktop, Audio, Media, Shell & Virtualization Stack ──────────
+log "Installing official system stack, Docker, and Virtualization tools..."
+OFFICIAL_PKGS=(
+  # Niri & Wayland Desktop Stack
+  niri xdg-desktop-portal xdg-desktop-portal-gnome polkit
+  pipewire pipewire-pulse pipewire-alsa wireplumber
+  networkmanager network-manager-applet brightnessctl playerctl
+  wl-clipboard cliphist grim slurp ttf-nerd-fonts-symbols noto-fonts
+  jemalloc dbus accountsservice greetd papirus-icon-theme
+  
+  # Shell & CLI Utilities
+  zsh starship zsh-autosuggestions zsh-syntax-highlighting zsh-completions
+  zsh-history-substring-search fzf zoxide eza bat atuin
+  
+  # Docker Stack
+  docker docker-compose
+  
+  # Virt-Manager / KVM Virtualization Stack
+  virt-manager qemu-desktop libvirt edk2-ovmf dnsmasq iptables-nft dmidecode bridge-utils
+)
 
-if [[ ! -f /usr/share/wayland-sessions/niri.desktop ]]; then
-  warn "niri.desktop session file not found under /usr/share/wayland-sessions — the niri package should provide this; check your install."
-fi
+install_pkgs "${OFFICIAL_PKGS[@]}"
 
-# accountsservice powers per-user avatars on the login screen.
-sudo systemctl enable accounts-daemon.service
+# ── 4. Foreign & AUR Packages ───────────────────────────────────────────
+log "Installing AUR/Chaotic-AUR applications..."
+AUR_PKGS=(
+  noctalia
+  noctalia-greeter
+  xwayland-satellite
+  ghostty-git
+  fastfetch-git
+  bibata-cursor-theme
+  fzf-tab
+  zen-browser-bin
+  zed
+  ffmpeg4.4
+  profile-sync-daemon-zen
+)
 
-# ── 4. NVIDIA legacy 580xx driver (GTX 960 / Maxwell) ────────────────────
-# Arch's official nvidia/nvidia-open packages dropped Maxwell + Pascal
-# support starting with the 590 driver branch. A GTX 960 (Maxwell) needs
-# the community-maintained legacy 580xx branch from the AUR instead.
-log "Installing NVIDIA 580xx legacy driver for GTX 960..."
+"$AUR_HELPER" -S --needed --noconfirm "${AUR_PKGS[@]}"
 
-# DKMS rebuilds the kernel module for whichever kernel(s) you have headers
-# for — detect the installed kernel package(s) and grab matching headers.
+# ── 5. NVIDIA Legacy 580xx Driver & Kernel Configuration ──────────────────
+log "Installing NVIDIA 580xx legacy driver..."
 NVIDIA_HEADERS_INSTALLED=0
 for k in linux linux-lts linux-zen linux-hardened; do
   if pacman -Qq "$k" &>/dev/null; then
@@ -147,47 +146,30 @@ for k in linux linux-lts linux-zen linux-hardened; do
     NVIDIA_HEADERS_INSTALLED=1
   fi
 done
-[[ $NVIDIA_HEADERS_INSTALLED -eq 0 ]] && warn "Could not detect your kernel package automatically — install the matching *-headers package yourself so DKMS can build."
+[[ $NVIDIA_HEADERS_INSTALLED -eq 0 ]] && warn "Could not detect active kernel package automatically for headers."
 
-install_nvidia_pkg() {
-  local pkg="$1"
-  if sudo pacman -S --needed --noconfirm "$pkg" 2>/dev/null; then
-    log "Installed $pkg as a prebuilt package from Chaotic-AUR."
-  else
-    log "Not available as a prebuilt package, building $pkg via $AUR_HELPER..."
-    "$AUR_HELPER" -S --needed --noconfirm "$pkg"
-  fi
-}
-install_nvidia_pkg nvidia-580xx-dkms
-install_nvidia_pkg nvidia-580xx-utils
-install_nvidia_pkg nvidia-580xx-settings
+install_pkgs nvidia-580xx-dkms nvidia-580xx-utils nvidia-580xx-settings
 
-# DRM kernel mode setting is required for a clean Wayland session.
-sudo sed -i -E \
-  's/^MODULES=\(([^)]*)\)/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' \
-  /etc/mkinitcpio.conf
+log "Configuring DRM kernel mode setting in mkinitcpio..."
+sudo sed -i -E 's/^MODULES=\(([^)]*)\)/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
 sudo mkinitcpio -P
 
-# Find Limine config (checking both old .cfg and new .conf extensions in common locations)
+# Scan Limine config locations (including custom arch-limine paths)
 LIMINE_CFG=""
 for cfg in \
-  /boot/limine.conf /boot/limine.cfg \
-  /boot/limine/limine.conf /boot/limine/limine.cfg \
-  /boot/EFI/BOOT/limine.conf /boot/EFI/BOOT/limine.cfg \
-  /boot/EFI/BOOT/limine/limine.conf /boot/EFI/BOOT/limine/limine.cfg \
-  /boot/efi/EFI/limine/limine.conf /boot/efi/EFI/limine/limine.cfg \
-  /boot/EFI/arch-limine/limine.config /boot/EFI/arch-limine/limine.conf /boot/EFI/arch-limine/limine.cfg; do
+  /boot/EFI/arch-limine/limine.config /boot/EFI/arch-limine/limine.conf /boot/EFI/arch-limine/limine.cfg \
+  /boot/limine.conf /boot/limine.cfg /boot/limine/limine.conf /boot/limine/limine.cfg \
+  /boot/EFI/BOOT/limine.conf /boot/EFI/BOOT/limine.cfg /boot/EFI/BOOT/limine/limine.conf /boot/EFI/BOOT/limine/limine.cfg \
+  /boot/efi/EFI/limine/limine.conf /boot/efi/EFI/limine/limine.cfg; do
   if [[ -f "$cfg" ]]; then
     LIMINE_CFG="$cfg"
     break
   fi
 done
 
-# Add the nvidia-drm.modeset=1 kernel parameter, whichever bootloader is in use.
 if [[ -n "$LIMINE_CFG" ]]; then
   log "Adding nvidia-drm.modeset=1 to Limine ($LIMINE_CFG)..."
   if ! grep -q "nvidia-drm.modeset=1" "$LIMINE_CFG"; then
-    # Appends to any line starting with cmdline, kernel_cmdline, KERNEL_CMDLINE, etc.
     sudo sed -i -E 's/^([[:space:]]*(kernel_)?cmdline.*)/\1 nvidia-drm.modeset=1/i' "$LIMINE_CFG"
   fi
 elif [[ -d /boot/loader/entries ]]; then
@@ -205,52 +187,30 @@ elif [[ -f /etc/default/grub ]] && command -v grub-mkconfig >/dev/null 2>&1; the
   fi
   sudo grub-mkconfig -o /boot/grub/grub.cfg
 else
-  warn "Could not detect Limine, systemd-boot, or GRUB automatically — add 'nvidia-drm.modeset=1' to your kernel command line manually."
+  warn "Could not locate bootloader configuration automatically."
 fi
 
-# ── 5. Enable NetworkManager (minimal installs often lack a network daemon) ─
+# ── 6. Services & User Groups Setup ─────────────────────────────────────
+log "Enabling system services..."
 sudo systemctl enable NetworkManager.service
+sudo systemctl enable accounts-daemon.service
+sudo systemctl enable docker.service
+sudo systemctl enable libvirtd.service
 
-# ── 6. Noctalia v5 (AUR) ──────────────────────────────────────────────────
-# Standalone binary, no Quickshell involved. Dependencies (sdbus-cpp,
-# libpipewire, libqalculate, libjxl, libwebp, libsndfile, librsvg, etc.)
-# are pulled automatically. Fast if Chaotic-AUR has a prebuilt package,
-# otherwise the AUR helper builds it (a C++/meson build, a few minutes).
-log "Installing Noctalia v5..."
+log "Adding user ($USER) to docker, libvirt, and kvm groups..."
+sudo usermod -aG docker,libvirt,kvm "$USER"
 
-if sudo pacman -S --needed --noconfirm noctalia 2>/dev/null; then
-  log "Installed noctalia as a prebuilt package from Chaotic-AUR."
-else
-  log "Not available as a prebuilt package, building via $AUR_HELPER..."
-  "$AUR_HELPER" -S --needed --noconfirm noctalia
+# Configure libvirt default network
+if command -v virsh >/dev/null 2>&1; then
+  sudo virsh net-autostart default 2>/dev/null || true
 fi
 
-# ── 7. Noctalia Greeter (AUR) — login screen matching Noctalia's look ────
-log "Installing Noctalia Greeter..."
-
-if sudo pacman -S --needed --noconfirm noctalia-greeter 2>/dev/null; then
-  log "Installed noctalia-greeter as a prebuilt package from Chaotic-AUR."
-else
-  log "Not available as a prebuilt package, building via $AUR_HELPER..."
-  "$AUR_HELPER" -S --needed --noconfirm noctalia-greeter
-fi
-
-# Packaged installs ship a tmpfiles.d drop-in that creates /var/lib/noctalia-greeter
-# (owned by the "greeter" user) — apply it now instead of waiting for a reboot.
-if [[ -f /usr/lib/tmpfiles.d/noctalia-greeter.conf ]]; then
-  sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/noctalia-greeter.conf
-else
-  warn "No noctalia-greeter tmpfiles.d drop-in found; creating /var/lib/noctalia-greeter manually."
-  sudo mkdir -p /var/lib/noctalia-greeter
-  sudo chown greeter:greeter /var/lib/noctalia-greeter 2>/dev/null || true
-fi
-
+# Configure Greetd + Noctalia Greeter
 GREETER_SESSION_BIN="$(command -v noctalia-greeter-session || true)"
-[[ -z "$GREETER_SESSION_BIN" ]] && die "noctalia-greeter-session not found after install — check the noctalia-greeter package."
-
-log "Configuring greetd to use Noctalia Greeter ($GREETER_SESSION_BIN)..."
-sudo mkdir -p /etc/greetd
-sudo tee /etc/greetd/config.toml >/dev/null <<EOF
+if [[ -n "$GREETER_SESSION_BIN" ]]; then
+  log "Configuring greetd with Noctalia Greeter..."
+  sudo mkdir -p /etc/greetd
+  sudo tee /etc/greetd/config.toml >/dev/null <<EOF
 [terminal]
 vt = 1
 
@@ -258,99 +218,43 @@ vt = 1
 command = "$GREETER_SESSION_BIN"
 user = "greeter"
 EOF
+  sudo systemctl enable greetd.service
+fi
 
-sudo systemctl enable greetd.service
-
-# ── 8. Shell, Terminal Utilities, and Extra Apps ──────────────────────────
-log "Installing zsh, terminal utilities, Zen Browser, FFmpeg 4.4, and Profile Sync Daemon..."
-"$AUR_HELPER" -S --needed --noconfirm \
-  zsh \
-  starship \
-  zsh-autosuggestions \
-  zsh-syntax-highlighting \
-  zsh-completions \
-  zsh-history-substring-search \
-  fzf \
-  fzf-tab \
-  zoxide \
-  eza \
-  bat \
-  atuin \
-  zen-browser-bin \
-  zed \
-  ffmpeg4.4 \
-  profile-sync-daemon-zen
-
-log "Changing default shell to zsh..."
-sudo chsh -s "$(command -v zsh)" "$USER" || warn "Failed to automatically change shell. You may need to run 'chsh -s $(command -v zsh)' manually later."
+log "Changing default shell to Zsh..."
+sudo chsh -s "$(command -v zsh)" "$USER" || warn "Manual chsh execution may be required."
 
 log "Configuring Profile Sync Daemon for Zen Browser..."
 mkdir -p "$HOME/.config/psd"
 cat > "$HOME/.config/psd/psd.conf" <<EOF
-# psd configuration - automatically generated
 USE_OVERLAYFS="yes"
 BROWSERS=("zen-browser")
 EOF
-
-# Enable psd.service for the normal user
 systemctl --user enable psd.service
 
-# ── 9. User Configurations from GitHub ────────────────────────────────────
-log "Cloning repository and copying niri, fastfetch, and .zshrc configurations..."
+# ── 7. Fetch Dotfiles from Repository ──────────────────────────────────
+log "Cloning dotfiles repository..."
 TMP_REPO=$(mktemp -d)
 git clone --depth 1 https://github.com/opaleiei/opalnirinoctalia.git "$TMP_REPO"
 
 mkdir -p "$HOME/.config"
+[[ -d "$TMP_REPO/niri" ]] && cp -r "$TMP_REPO/niri" "$HOME/.config/" && log "Copied niri config."
+[[ -d "$TMP_REPO/fastfetch" ]] && cp -r "$TMP_REPO/fastfetch" "$HOME/.config/" && log "Copied fastfetch config."
+[[ -f "$TMP_REPO/.zshrc" ]] && cp "$TMP_REPO/.zshrc" "$HOME/.zshrc" && log "Copied .zshrc."
 
-if [[ -d "$TMP_REPO/niri" ]]; then
-  cp -r "$TMP_REPO/niri" "$HOME/.config/"
-  log "Successfully copied niri config."
-else
-  warn "niri folder not found in the repository."
-fi
-
-if [[ -d "$TMP_REPO/fastfetch" ]]; then
-  cp -r "$TMP_REPO/fastfetch" "$HOME/.config/"
-  log "Successfully copied fastfetch config."
-else
-  warn "fastfetch folder not found in the repository."
-fi
-
-if [[ -f "$TMP_REPO/.zshrc" ]]; then
-  cp "$TMP_REPO/.zshrc" "$HOME/.zshrc"
-  log "Successfully copied .zshrc."
-else
-  warn ".zshrc not found in the repository."
-fi
-
-rm -rf "$TMP_REPO"
-
-# ── 10. Done ────────────────────────────────────────────────────────────
-log "Install complete."
+# ── 8. Completion Summary ───────────────────────────────────────────────
+log "Installation and optimization complete."
 cat <<EOF
 
-Next steps:
-  1. Reboot — required for the NVIDIA kernel modules, locales, Profile Sync Daemon, and the
-     nvidia-drm.modeset=1 parameter to take effect.
-  2. Noctalia Greeter appears at login. Press F3 to pick the "niri" session
-     if it isn't already selected, then log in.
-  3. Noctalia starts automatically after login. Open its settings with
-     Mod+Comma to pick a theme, wallpaper, and bar modules.
-  4. To make the login screen match your desktop (wallpaper, palette,
-     font), go to Settings → Security → Noctalia Greeter → Sync Now
-     inside Noctalia (needs a polkit agent / pkexec).
-  5. Your niri config lives at: ~/.config/niri/config.kdl
-  6. Your shell has been changed to zsh.
+Summary of changes:
+  • Installed Docker & Docker Compose; added user to 'docker' group.
+  • Installed Virt-Manager & KVM stack; added user to 'libvirt' and 'kvm' groups.
+  • Configured system timezone (Asia/Bangkok) and locales (en_US, th_TH).
+  • Configured NVIDIA 580xx drivers and Limine kernel arguments.
+  • Applied dotfiles for Niri, Fastfetch, and Zsh.
 
-Verify NVIDIA after reboot with:
-  nvidia-smi
-  cat /sys/module/nvidia_drm/parameters/modeset   # should print Y
-
-Verify Profile Sync Daemon after reboot with:
-  psd p
-
-If something fails to start, check logs with:
-  journalctl --user -b | grep -i noctalia
-  journalctl -u greetd -b | grep -i noctalia-greeter
-  journalctl -b | grep -i niri
+Next Steps:
+  1. Reboot the system to initialize the kernel modules, group memberships, and services.
+  2. Test Docker: 'docker run hello-world' (no sudo needed after reboot).
+  3. Test Virt-Manager: Launch 'virt-manager' from your launcher or terminal.
 EOF
