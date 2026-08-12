@@ -242,6 +242,7 @@ git clone --depth 1 https://github.com/opaleiei/opalnirinoctalia.git "$TMP_REPO"
 mkdir -p "$HOME/.config"
 [[ -d "$TMP_REPO/niri" ]] && cp -r "$TMP_REPO/niri" "$HOME/.config/" && log "Copied niri config."
 [[ -d "$TMP_REPO/fastfetch" ]] && cp -r "$TMP_REPO/fastfetch" "$HOME/.config/" && log "Copied fastfetch config."
+[[ -d "$TMP_REPO/ghostty" ]] && cp -r "$TMP_REPO/ghostty" "$HOME/.config/" && log "Copied ghostty config."
 [[ -f "$TMP_REPO/.zshrc" ]] && cp "$TMP_REPO/.zshrc" "$HOME/.zshrc" && log "Copied .zshrc."
 
 # ── 8. Completion Summary ───────────────────────────────────────────────
