@@ -9,3 +9,5 @@ include "./cfg/misc.kdl"
 
 include "./noctalia.kdl"
 
+workspace "A"
+workspace "B"

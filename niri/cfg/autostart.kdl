@@ -2,3 +2,5 @@
 // https://github.com/YaLTeR/niri/wiki/Configuration:-Miscellaneous#spawn-sh-at-startup
 
     spawn-sh-at-startup "noctalia"
+    spawn-sh-at-startup "audiorelay"
+    spawn-sh-at-startup "xwayland-satellite"

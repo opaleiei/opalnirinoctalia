@@ -20,3 +20,15 @@
         match namespace="^noctalia-wallpaper*"
         place-within-backdrop true
 }
+window-rule {
+    match app-id="com-azefsw-audioconnect-desktop-app-MainKt"
+    open-on-workspace "B"
+}
+
+window-rule {
+    match app-id="zen" title="Picture-in-Picture"
+    open-floating true
+    default-column-width { fixed 480; }
+    default-window-height { fixed 270; }
+    default-floating-position x=5 y=1140 relative-to="top-left"
+}

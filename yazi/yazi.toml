@@ -1,0 +1,4 @@
+[opener]
+text_editor = [
+    { run = 'zeditor "$@"', block = true, for = "unix" },
+]
