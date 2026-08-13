@@ -3,7 +3,8 @@
 #
 # Installs and configures niri (scrollable-tiling Wayland compositor) with
 # Noctalia v5, greetd + Noctalia Greeter, NVIDIA 580xx legacy drivers,
-# Zsh terminal stack, Zen Browser with PSD, Docker, and KVM/virt-manager.
+# Zsh terminal stack, Zen Browser with PSD, Docker, KVM/virt-manager,
+# and Snapper + Limine snapshot sync for Btrfs (@root).
 #
 # Usage:
 #   chmod +x install-niri-noctalia.sh
@@ -96,51 +97,9 @@ install_pkgs() {
   fi
 }
 
-# ── 3. Core Desktop, Audio, Media, Shell & Virtualization Stack ──────────
-log "Installing official system stack, Docker, and Virtualization tools..."
-OFFICIAL_PKGS=(
-  # Niri & Wayland Desktop Stack
-  niri xdg-desktop-portal xdg-desktop-portal-gnome polkit
-  pipewire pipewire-pulse pipewire-alsa wireplumber
-  networkmanager network-manager-applet brightnessctl playerctl
-  wl-clipboard cliphist grim slurp ttf-nerd-fonts-symbols noto-fonts
-  jemalloc dbus accountsservice greetd papirus-icon-theme ddcutil
-  
-  # Shell & CLI Utilities
-  zsh starship zsh-autosuggestions zsh-syntax-highlighting zsh-completions
-  zsh-history-substring-search fzf zoxide eza bat atuin
-  
-  # Docker Stack
-  docker docker-compose
-  
-  # Virt-Manager / KVM Virtualization Stack
-  virt-manager qemu-desktop libvirt edk2-ovmf dnsmasq iptables-nft dmidecode bridge-utils
-)
-
-install_pkgs "${OFFICIAL_PKGS[@]}"
-
-# ── 4. Foreign & AUR Packages ───────────────────────────────────────────
-log "Installing AUR/Chaotic-AUR applications..."
-AUR_PKGS=(
-  noctalia
-  noctalia-greeter
-  xwayland-satellite
-  ghostty-git
-  fastfetch-git
-  bibata-cursor-theme
-  fzf-tab
-  zen-browser-bin
-  zed
-  ffmpeg4.4
-  profile-sync-daemon-zen
-  limine-mkinitcpio-hook
-  nautilus-admin-gtk4
-)
-
-"$AUR_HELPER" -S --needed --noconfirm "${AUR_PKGS[@]}"
-
-# ── 5. NVIDIA Legacy 580xx Driver & Kernel Configuration ──────────────────
-log "Installing NVIDIA 580xx legacy driver..."
+# ── 3. FIRST: NVIDIA Legacy 580xx Driver & Bootloader Kernel Params ───────
+# Installed BEFORE other desktop/multimedia packages to avoid package/provider conflicts.
+log "Installing NVIDIA 580xx legacy driver early to prevent driver conflicts..."
 NVIDIA_HEADERS_INSTALLED=0
 for k in linux linux-lts linux-zen linux-hardened; do
   if pacman -Qq "$k" &>/dev/null; then
@@ -156,7 +115,36 @@ log "Configuring DRM kernel mode setting in mkinitcpio..."
 sudo sed -i -E 's/^MODULES=\(([^)]*)\)/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
 sudo mkinitcpio -P
 
-# Scan Limine config locations (including custom arch-limine paths)
+log "Ensuring nvidia-drm.modeset=1 is configured across Limine and Kernel cmdline..."
+
+# 1. Update /etc/default/limine (read by limine-entry-tool / limine-mkinitcpio-hook)
+sudo mkdir -p /etc/default
+if [[ ! -f /etc/default/limine ]]; then
+  sudo tee /etc/default/limine >/dev/null <<EOF
+LIMIT_USAGE_PERCENT=85
+MAX_SNAPSHOT_ENTRIES=auto
+KERNEL_CMDLINE[default]+=" nvidia-drm.modeset=1"
+EOF
+else
+  if ! grep -q "nvidia-drm.modeset=1" /etc/default/limine; then
+    echo 'KERNEL_CMDLINE[default]+=" nvidia-drm.modeset=1"' | sudo tee -a /etc/default/limine >/dev/null
+  fi
+fi
+
+# 2. Update /etc/kernel/cmdline (standard systemd/limine kernel command line file)
+if [[ -f /etc/kernel/cmdline ]]; then
+  if ! grep -q "nvidia-drm.modeset=1" /etc/kernel/cmdline; then
+    sudo sed -i 's/$/ nvidia-drm.modeset=1/' /etc/kernel/cmdline
+  fi
+elif [[ -f /proc/cmdline ]]; then
+  CMDLINE_VAL=$(cat /proc/cmdline | sed 's/BOOT_IMAGE=[^ ]* //g')
+  if ! echo "$CMDLINE_VAL" | grep -q "nvidia-drm.modeset=1"; then
+    CMDLINE_VAL="$CMDLINE_VAL nvidia-drm.modeset=1"
+  fi
+  echo "$CMDLINE_VAL" | sudo tee /etc/kernel/cmdline >/dev/null
+fi
+
+# 3. Update active Limine configuration file directly on the boot partition
 LIMINE_CFG=""
 for cfg in \
   /boot/EFI/arch-limine/limine.config /boot/EFI/arch-limine/limine.conf /boot/EFI/arch-limine/limine.cfg \
@@ -170,7 +158,7 @@ for cfg in \
 done
 
 if [[ -n "$LIMINE_CFG" ]]; then
-  log "Adding nvidia-drm.modeset=1 to Limine ($LIMINE_CFG)..."
+  log "Adding nvidia-drm.modeset=1 to active Limine config ($LIMINE_CFG)..."
   if ! grep -q "nvidia-drm.modeset=1" "$LIMINE_CFG"; then
     sudo sed -i -E 's/^([[:space:]]*(kernel_)?cmdline.*)/\1 nvidia-drm.modeset=1/i' "$LIMINE_CFG"
   fi
@@ -192,7 +180,94 @@ else
   warn "Could not locate bootloader configuration automatically."
 fi
 
-# ── 6. Services & User Groups Setup ─────────────────────────────────────
+# ── 4. Core Desktop, Audio, Shell, Virtualization & Btrfs Stack ─────────
+log "Installing official system stack, Docker, Virtualization, and Btrfs/Snapper..."
+OFFICIAL_PKGS=(
+  # Niri & Wayland Desktop Stack
+  niri xdg-desktop-portal xdg-desktop-portal-gnome polkit
+  pipewire pipewire-pulse pipewire-alsa wireplumber
+  networkmanager network-manager-applet brightnessctl playerctl
+  wl-clipboard cliphist grim slurp ttf-nerd-fonts-symbols noto-fonts
+  jemalloc dbus accountsservice greetd papirus-icon-theme ddcutil
+  
+  # Shell & CLI Utilities
+  zsh starship zsh-autosuggestions zsh-syntax-highlighting zsh-completions
+  zsh-history-substring-search fzf zoxide eza bat atuin
+  
+  # Docker Stack
+  docker docker-compose
+  
+  # Virt-Manager / KVM Virtualization Stack
+  virt-manager qemu-desktop libvirt edk2-ovmf dnsmasq iptables-nft dmidecode bridge-utils
+
+  # Btrfs & Snapper Stack
+  btrfs-progs snapper snap-pac inotify-tools
+)
+
+install_pkgs "${OFFICIAL_PKGS[@]}"
+
+# ── 5. Foreign & AUR Packages ───────────────────────────────────────────
+log "Installing AUR/Chaotic-AUR applications and Limine hooks..."
+AUR_PKGS=(
+  noctalia
+  noctalia-greeter
+  xwayland-satellite
+  ghostty-git
+  fastfetch-git
+  bibata-cursor-theme
+  fzf-tab
+  zen-browser-bin
+  zed
+  ffmpeg4.4
+  profile-sync-daemon-zen
+  limine-mkinitcpio-hook
+  limine-snapper-sync
+  nautilus-admin-gtk4
+)
+
+"$AUR_HELPER" -S --needed --noconfirm "${AUR_PKGS[@]}"
+
+# Trigger limine-update if limine-entry-tool / limine-mkinitcpio-hook was just installed
+if command -v limine-update >/dev/null 2>&1; then
+  log "Rebuilding Limine entries with limine-update..."
+  sudo limine-update || warn "limine-update encountered an issue, check config manually."
+fi
+
+# ── 6. Snapper & Limine Snapshot Integration (Btrfs @root) ───────────────
+log "Configuring Snapper for root (/) and Limine snapshot sync..."
+
+if [[ ! -f /etc/snapper/configs/root ]]; then
+  if [[ -d "/.snapshots" ]]; then
+    sudo umount /.snapshots 2>/dev/null || true
+    sudo rm -rf /.snapshots 2>/dev/null || true
+  fi
+  sudo snapper -c root create-config /
+fi
+
+# Set permissions for wheel group
+sudo chmod 750 /.snapshots 2>/dev/null || true
+sudo chown root:wheel /.snapshots 2>/dev/null || true
+sudo sed -i 's/^ALLOW_GROUPS=""/ALLOW_GROUPS="wheel"/' /etc/snapper/configs/root
+sudo sed -i 's/^SYNC_USER="no"/SYNC_USER="yes"/' /etc/snapper/configs/root
+
+# Enable Snapper automatic timeline and cleanup services
+sudo systemctl enable snapper-timeline.timer snapper-cleanup.timer
+
+# Ensure Limine config has the snapshot marker //Snapshots for limine-snapper-sync
+if [[ -n "$LIMINE_CFG" && -f "$LIMINE_CFG" ]]; then
+  if ! grep -q "//Snapshots" "$LIMINE_CFG" && ! grep -q "/Snapshots" "$LIMINE_CFG"; then
+    log "Adding //Snapshots marker to $LIMINE_CFG for Limine snapshot sync..."
+    echo -e "\n//Snapshots" | sudo tee -a "$LIMINE_CFG" >/dev/null
+  fi
+fi
+
+# Enable Limine Snapper Sync watcher service
+if systemctl list-unit-files | grep -q "limine-snapper-sync.service"; then
+  log "Enabling limine-snapper-sync service..."
+  sudo systemctl enable limine-snapper-sync.service
+fi
+
+# ── 7. Services & User Groups Setup ─────────────────────────────────────
 log "Enabling system services..."
 sudo systemctl enable NetworkManager.service
 sudo systemctl enable accounts-daemon.service
@@ -234,7 +309,7 @@ BROWSERS=("zen-browser")
 EOF
 systemctl --user enable psd.service
 
-# ── 7. Fetch Dotfiles from Repository ──────────────────────────────────
+# ── 8. Fetch Dotfiles from Repository ──────────────────────────────────
 log "Cloning dotfiles repository..."
 TMP_REPO=$(mktemp -d)
 git clone --depth 1 https://github.com/opaleiei/opalnirinoctalia.git "$TMP_REPO"
@@ -245,19 +320,21 @@ mkdir -p "$HOME/.config"
 [[ -d "$TMP_REPO/ghostty" ]] && cp -r "$TMP_REPO/ghostty" "$HOME/.config/" && log "Copied ghostty config."
 [[ -f "$TMP_REPO/.zshrc" ]] && cp "$TMP_REPO/.zshrc" "$HOME/.zshrc" && log "Copied .zshrc."
 
-# ── 8. Completion Summary ───────────────────────────────────────────────
+# ── 9. Completion Summary ───────────────────────────────────────────────
 log "Installation and optimization complete."
 cat <<EOF
 
 Summary of changes:
+  • Installed NVIDIA 580xx drivers FIRST to eliminate provider/package conflicts.
+  • Configured 'nvidia-drm.modeset=1' across /etc/default/limine, /etc/kernel/cmdline, and active Limine config files.
+  • Configured Snapper for root (/) and enabled snap-pac automatic pacman snapshots.
+  • Configured limine-snapper-sync and added //Snapshots marker to Limine boot config.
   • Installed Docker & Docker Compose; added user to 'docker' group.
   • Installed Virt-Manager & KVM stack; added user to 'libvirt' and 'kvm' groups.
   • Configured system timezone (Asia/Bangkok) and locales (en_US, th_TH).
-  • Configured NVIDIA 580xx drivers and Limine kernel arguments.
-  • Applied dotfiles for Niri, Fastfetch, and Zsh.
+  • Applied dotfiles for Niri, Fastfetch, Ghostty, and Zsh.
 
 Next Steps:
-  1. Reboot the system to initialize the kernel modules, group memberships, and services.
-  2. Test Docker: 'docker run hello-world' (no sudo needed after reboot).
-  3. Test Virt-Manager: Launch 'virt-manager' from your launcher or terminal.
+  1. Reboot the system to initialize kernel parameters, group memberships, and services.
+  2. Verify kernel parameter after reboot: 'cat /proc/cmdline' (should show nvidia-drm.modeset=1).
 EOF
