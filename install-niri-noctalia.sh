@@ -52,7 +52,7 @@ sudo locale-gen
 echo "LANG=en_US.UTF-8" | sudo tee /etc/locale.conf >/dev/null
 
 log "Updating system databases and base tools..."
-sudo pacman -Syu --needed --noconfirm base-devel git curl wget wget2
+sudo pacman -Syu --needed --noconfirm base-devel git curl wget 
 
 # ── 1. Chaotic-AUR & CachyOS Repositories ────────────────────────────────
 if ! grep -q "^\[chaotic-aur\]" /etc/pacman.conf 2>/dev/null; then
