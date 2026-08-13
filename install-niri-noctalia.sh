@@ -257,6 +257,7 @@ AUR_PKGS=(
   limine-snapper-sync
   nautilus-admin-gtk4
   zsh-autopair-git
+  deja-bin
 )
 
 "$AUR_HELPER" -S --needed --noconfirm "${AUR_PKGS[@]}"
