@@ -51,6 +51,20 @@ sudo sed -i 's/^#th_TH.UTF-8 UTF-8/th_TH.UTF-8 UTF-8/' /etc/locale.gen
 sudo locale-gen
 echo "LANG=en_US.UTF-8" | sudo tee /etc/locale.conf >/dev/null
 
+log "Ensuring [multilib] repository is enabled for 32-bit gaming support..."
+if ! grep -q "^\[multilib\]" /etc/pacman.conf 2>/dev/null; then
+  if grep -q "^#\[multilib\]" /etc/pacman.conf 2>/dev/null; then
+    sudo sed -i '/^#\[multilib\]/{n;s/^#//}' /etc/pacman.conf
+    sudo sed -i 's/^#\[multilib\]/\[multilib\]/' /etc/pacman.conf
+  else
+    sudo tee -a /etc/pacman.conf >/dev/null <<'EOF'
+
+[multilib]
+Include = /etc/pacman.d/mirrorlist
+EOF
+  fi
+fi
+
 log "Updating system databases and base tools..."
 sudo pacman -Syu --needed --noconfirm base-devel git curl wget
 
@@ -79,6 +93,7 @@ if ! grep -q "^\[cachyos\]" /etc/pacman.conf 2>/dev/null; then
   curl -sL https://mirror.cachyos.org/cachyos-repo.tar.xz | tar xJ -C "$tmp_cachy"
   (cd "$tmp_cachy/cachyos-repo" && sudo bash cachyos-repo.sh)
   rm -rf "$tmp_cachy"
+  sudo pacman -Sy
 else
   log "CachyOS repository already enabled."
 fi
@@ -109,11 +124,11 @@ install_pkgs() {
   fi
 }
 
-# ── 3. FIRST: Kernels, NVIDIA Legacy 580xx Driver & Bootloader Params ─────
-log "Installing linux-cachyos kernel and cachyos-gaming-meta..."
-sudo pacman -S --needed --noconfirm linux-cachyos linux-cachyos-headers cachyos-gaming-meta
+# ── 3. FIRST: Kernels & NVIDIA Legacy 580xx Driver ───────────────────────
+log "Installing linux-cachyos kernel and headers..."
+sudo pacman -S --needed --noconfirm linux-cachyos linux-cachyos-headers
 
-log "Installing NVIDIA 580xx legacy driver early to prevent driver conflicts..."
+log "Installing NVIDIA 580xx legacy drivers (64-bit + 32-bit) FIRST to satisfy GPU providers..."
 NVIDIA_HEADERS_INSTALLED=0
 for k in linux-cachyos linux linux-lts linux-zen linux-hardened; do
   if pacman -Qq "$k" &>/dev/null; then
@@ -125,10 +140,15 @@ if [[ $NVIDIA_HEADERS_INSTALLED -eq 0 ]]; then
   warn "Could not detect active kernel package automatically for headers."
 fi
 
-install_pkgs nvidia-580xx-dkms nvidia-580xx-utils nvidia-580xx-settings
+install_pkgs nvidia-580xx-dkms nvidia-580xx-utils lib32-nvidia-580xx-utils nvidia-580xx-settings
+
+log "Installing cachyos-gaming-meta (NVIDIA drivers now set as graphics provider)..."
+install_pkgs cachyos-gaming-meta
 
 log "Configuring DRM kernel mode setting in mkinitcpio..."
-sudo sed -i -E 's/^MODULES=\(([^)]*)\)/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
+if ! grep -q "nvidia_drm" /etc/mkinitcpio.conf 2>/dev/null; then
+  sudo sed -i -E 's/^MODULES=\(([^)]*)\)/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
+fi
 sudo mkinitcpio -P
 
 log "Ensuring nvidia-drm.modeset=1 is configured across Limine and Kernel cmdline..."
@@ -146,7 +166,6 @@ else
   if ! grep -q "nvidia-drm.modeset=1" /etc/default/limine; then
     echo 'KERNEL_CMDLINE[default]+=" nvidia-drm.modeset=1"' | sudo tee -a /etc/default/limine >/dev/null
   fi
-  # Inject priority if missing to ensure cachyos boots by default
   if ! grep -q "KERNEL_PRIORITY" /etc/default/limine; then
     echo 'KERNEL_PRIORITY=("linux-cachyos" "linux-zen" "linux-lts" "linux" "linux-hardened")' | sudo tee -a /etc/default/limine >/dev/null
   fi
@@ -328,7 +347,7 @@ cat > "$HOME/.config/psd/psd.conf" <<EOF
 USE_OVERLAYFS="yes"
 BROWSERS=("zen-browser")
 EOF
-systemctl --user enable psd.service
+systemctl --user enable psd.service 2>/dev/null || warn "User systemd bus not running; enable psd.service manually after rebooting."
 
 # ── 8. Fetch Dotfiles from Repository ──────────────────────────────────
 log "Cloning dotfiles repository..."
@@ -366,18 +385,19 @@ log "Installation and optimization complete."
 cat <<EOF
 
 Summary of changes:
-  • Installed and enabled CachyOS repository cleanly using 'cachyos-repo.sh'.
-  • Installed linux-cachyos, cachyos-gaming-meta, and configured Limine to boot linux-cachyos by default.
-  • Installed NVIDIA 580xx drivers FIRST to eliminate provider/package conflicts.
+  • Enabled [multilib] repository for 32-bit gaming dependency support.
+  • Installed CachyOS repository, linux-cachyos, and linux-cachyos-headers.
+  • Installed NVIDIA 580xx legacy drivers (both 64-bit and 32-bit) FIRST to satisfy GPU dependencies.
+  • Installed cachyos-gaming-meta without provider conflicts.
   • Configured 'nvidia-drm.modeset=1' across /etc/default/limine, /etc/kernel/cmdline, and active Limine config files.
   • Configured Snapper for root (/) and enabled snap-pac automatic pacman snapshots.
   • Configured limine-snapper-sync and added //Snapshots marker to Limine boot config.
   • Installed Docker & Docker Compose; added user to 'docker' group.
   • Installed Virt-Manager & KVM stack; added user to 'libvirt' and 'kvm' groups.
   • Configured system timezone (Asia/Bangkok) and locales (en_US, th_TH).
-  • Applied dotfiles for Niri, Fastfetch, Ghostty, and Zsh.
+  • Applied dotfiles for Niri, Fastfetch, Ghostty, Atuin, and Zsh.
 
 Next Steps:
-  1. Reboot the system to initialize the CachyOS kernel, NVIDIA modules, group memberships, and services.
-  2. Verify kernel parameter after reboot: 'cat /proc/cmdline' (should show nvidia-drm.modeset=1 and your new kernel name).
+  1. Reboot the system to boot into the CachyOS kernel with full NVIDIA acceleration.
+  2. Verify kernel parameter after reboot: 'cat /proc/cmdline' (should show nvidia-drm.modeset=1 and linux-cachyos).
 EOF
