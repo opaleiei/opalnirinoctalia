@@ -6,6 +6,8 @@
 # Zsh terminal stack, Zen Browser with PSD, Docker, KVM/virt-manager,
 # and Snapper + Limine snapshot sync for Btrfs (@root).
 #
+# Now includes CachyOS Repository, linux-cachyos kernel, and gaming optimizations.
+#
 # Usage:
 #   chmod +x install-niri-noctalia.sh
 #   ./install-niri-noctalia.sh
@@ -50,9 +52,9 @@ sudo locale-gen
 echo "LANG=en_US.UTF-8" | sudo tee /etc/locale.conf >/dev/null
 
 log "Updating system databases and base tools..."
-sudo pacman -Syu --needed --noconfirm base-devel git
+sudo pacman -Syu --needed --noconfirm base-devel git curl wget wget2
 
-# ── 1. Chaotic-AUR (prebuilt binary repository) ─────────────────────────
+# ── 1. Chaotic-AUR & CachyOS Repositories ────────────────────────────────
 if ! grep -q "^\[chaotic-aur\]" /etc/pacman.conf 2>/dev/null; then
   log "Enabling Chaotic-AUR..."
   sudo pacman-key --recv-key 3056513887B78AEB --keyserver keyserver.ubuntu.com
@@ -69,6 +71,16 @@ EOF
   sudo pacman -Sy
 else
   log "Chaotic-AUR already enabled."
+fi
+
+if ! grep -q "^\[cachyos\]" /etc/pacman.conf 2>/dev/null; then
+  log "Enabling CachyOS repository..."
+  tmp_cachy=$(mktemp -d)
+  curl -sL https://mirror.cachyos.org/cachyos-repo.tar.xz | tar xJ -C "$tmp_cachy"
+  (cd "$tmp_cachy/cachyos-repo" && sudo bash cachyos-repo.sh --dont-update)
+  rm -rf "$tmp_cachy"
+else
+  log "CachyOS repository already enabled."
 fi
 
 # ── 2. AUR Helper Setup (paru / yay) ────────────────────────────────────
@@ -97,11 +109,13 @@ install_pkgs() {
   fi
 }
 
-# ── 3. FIRST: NVIDIA Legacy 580xx Driver & Bootloader Kernel Params ───────
-# Installed BEFORE other desktop/multimedia packages to avoid package/provider conflicts.
+# ── 3. FIRST: Kernels, NVIDIA Legacy 580xx Driver & Bootloader Params ─────
+log "Installing linux-cachyos kernel and cachyos-gaming-meta..."
+sudo pacman -S --needed --noconfirm linux-cachyos linux-cachyos-headers cachyos-gaming-meta
+
 log "Installing NVIDIA 580xx legacy driver early to prevent driver conflicts..."
 NVIDIA_HEADERS_INSTALLED=0
-for k in linux linux-lts linux-zen linux-hardened; do
+for k in linux-cachyos linux linux-lts linux-zen linux-hardened; do
   if pacman -Qq "$k" &>/dev/null; then
     sudo pacman -S --needed --noconfirm "${k}-headers"
     NVIDIA_HEADERS_INSTALLED=1
@@ -124,10 +138,15 @@ if [[ ! -f /etc/default/limine ]]; then
 LIMIT_USAGE_PERCENT=85
 MAX_SNAPSHOT_ENTRIES=auto
 KERNEL_CMDLINE[default]+=" nvidia-drm.modeset=1"
+KERNEL_PRIORITY=("linux-cachyos" "linux-zen" "linux-lts" "linux" "linux-hardened")
 EOF
 else
   if ! grep -q "nvidia-drm.modeset=1" /etc/default/limine; then
     echo 'KERNEL_CMDLINE[default]+=" nvidia-drm.modeset=1"' | sudo tee -a /etc/default/limine >/dev/null
+  fi
+  # Inject priority if missing to ensure cachyos boots by default
+  if ! grep -q "KERNEL_PRIORITY" /etc/default/limine; then
+    echo 'KERNEL_PRIORITY=("linux-cachyos" "linux-zen" "linux-lts" "linux" "linux-hardened")' | sudo tee -a /etc/default/limine >/dev/null
   fi
 fi
 
@@ -229,7 +248,7 @@ AUR_PKGS=(
 
 # Trigger limine-update if limine-entry-tool / limine-mkinitcpio-hook was just installed
 if command -v limine-update >/dev/null 2>&1; then
-  log "Rebuilding Limine entries with limine-update..."
+  log "Rebuilding Limine entries with limine-update (which will set CachyOS as default)..."
   sudo limine-update || warn "limine-update encountered an issue, check config manually."
 fi
 
@@ -326,6 +345,8 @@ log "Installation and optimization complete."
 cat <<EOF
 
 Summary of changes:
+  • Installed and enabled CachyOS repository.
+  • Installed linux-cachyos, cachyos-gaming-meta, and configured Limine to boot linux-cachyos by default.
   • Installed NVIDIA 580xx drivers FIRST to eliminate provider/package conflicts.
   • Configured 'nvidia-drm.modeset=1' across /etc/default/limine, /etc/kernel/cmdline, and active Limine config files.
   • Configured Snapper for root (/) and enabled snap-pac automatic pacman snapshots.
@@ -336,6 +357,6 @@ Summary of changes:
   • Applied dotfiles for Niri, Fastfetch, Ghostty, and Zsh.
 
 Next Steps:
-  1. Reboot the system to initialize kernel parameters, group memberships, and services.
-  2. Verify kernel parameter after reboot: 'cat /proc/cmdline' (should show nvidia-drm.modeset=1).
+  1. Reboot the system to initialize the CachyOS kernel, NVIDIA modules, group memberships, and services.
+  2. Verify kernel parameter after reboot: 'cat /proc/cmdline' (should show nvidia-drm.modeset=1 and your new kernel name).
 EOF
