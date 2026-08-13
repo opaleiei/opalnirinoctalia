@@ -1,7 +1,7 @@
 autoload -Uz compinit && compinit
 source /usr/share/zsh/plugins/fzf-tab/fzf-tab.plugin.zsh
 
-source /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
+#source /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
 source /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 source /usr/share/zsh/plugins/zsh-history-substring-search/zsh-history-substring-search.zsh
 fpath+=(/usr/share/zsh/site-functions)
@@ -12,6 +12,7 @@ bindkey '^[[B' history-substring-search-down
 eval "$(starship init zsh)"
 eval "$(zoxide init zsh)"
 eval "$(atuin init zsh)"
+eval "$(deja init zsh)"
 source /usr/share/zsh/plugins/zsh-autopair/autopair.zsh
 autopair-init
 alias ls='eza --icons --group-directories-first'
