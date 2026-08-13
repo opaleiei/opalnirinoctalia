@@ -4,9 +4,7 @@
 # Installs and configures niri (scrollable-tiling Wayland compositor) with
 # Noctalia v5, greetd + Noctalia Greeter, NVIDIA 580xx legacy drivers,
 # Zsh terminal stack, Zen Browser with PSD, Docker, KVM/virt-manager,
-# and Snapper + Limine snapshot sync for Btrfs (@root).
-#
-# Now includes CachyOS Repository, linux-cachyos kernel, and gaming optimizations.
+# Snapper + Limine snapshot sync for Btrfs (@root), and CachyOS repos + kernel.
 #
 # Usage:
 #   chmod +x install-niri-noctalia.sh
@@ -21,7 +19,9 @@ warn() { echo -e "\033[1;33m!!\033[0m $*"; }
 die()  { echo -e "\033[1;31mERROR:\033[0m $*" >&2; exit 1; }
 
 # Guard checks
-[[ $EUID -eq 0 ]] && die "Run this as your normal user, not root. It will call sudo when needed."
+if [[ $EUID -eq 0 ]]; then
+  die "Run this as your normal user, not root. It will call sudo when needed."
+fi
 command -v sudo >/dev/null 2>&1 || die "sudo is not installed. Add user to wheel group and install sudo first."
 command -v pacman >/dev/null 2>&1 || die "This script is for Arch Linux (pacman not found)."
 
@@ -30,7 +30,7 @@ TMP_REPO=""
 SUDO_PID=""
 cleanup() {
   [[ -n "$SUDO_PID" ]] && kill "$SUDO_PID" 2>/dev/null || true
-  [[ -n "$TMP_REPO" && -d "$TMP_REPO" ]] && rm -rf "$TMP_REPO"
+  [[ -n "$TMP_REPO" && -d "$TMP_REPO" ]] && rm -rf "$TMP_REPO" || true
 }
 trap cleanup EXIT
 
@@ -52,7 +52,7 @@ sudo locale-gen
 echo "LANG=en_US.UTF-8" | sudo tee /etc/locale.conf >/dev/null
 
 log "Updating system databases and base tools..."
-sudo pacman -Syu --needed --noconfirm base-devel git curl wget 
+sudo pacman -Syu --needed --noconfirm base-devel git curl wget
 
 # ── 1. Chaotic-AUR & CachyOS Repositories ────────────────────────────────
 if ! grep -q "^\[chaotic-aur\]" /etc/pacman.conf 2>/dev/null; then
@@ -77,7 +77,7 @@ if ! grep -q "^\[cachyos\]" /etc/pacman.conf 2>/dev/null; then
   log "Enabling CachyOS repository..."
   tmp_cachy=$(mktemp -d)
   curl -sL https://mirror.cachyos.org/cachyos-repo.tar.xz | tar xJ -C "$tmp_cachy"
-  (cd "$tmp_cachy/cachyos-repo" && sudo bash cachyos-repo.sh --dont-update)
+  (cd "$tmp_cachy/cachyos-repo" && sudo bash cachyos-repo.sh)
   rm -rf "$tmp_cachy"
 else
   log "CachyOS repository already enabled."
@@ -121,7 +121,9 @@ for k in linux-cachyos linux linux-lts linux-zen linux-hardened; do
     NVIDIA_HEADERS_INSTALLED=1
   fi
 done
-[[ $NVIDIA_HEADERS_INSTALLED -eq 0 ]] && warn "Could not detect active kernel package automatically for headers."
+if [[ $NVIDIA_HEADERS_INSTALLED -eq 0 ]]; then
+  warn "Could not detect active kernel package automatically for headers."
+fi
 
 install_pkgs nvidia-580xx-dkms nvidia-580xx-utils nvidia-580xx-settings
 
@@ -334,18 +336,37 @@ TMP_REPO=$(mktemp -d)
 git clone --depth 1 https://github.com/opaleiei/opalnirinoctalia.git "$TMP_REPO"
 
 mkdir -p "$HOME/.config"
-[[ -d "$TMP_REPO/niri" ]] && cp -r "$TMP_REPO/niri" "$HOME/.config/" && log "Copied niri config."
-[[ -d "$TMP_REPO/fastfetch" ]] && cp -r "$TMP_REPO/fastfetch" "$HOME/.config/" && log "Copied fastfetch config."
-[[ -d "$TMP_REPO/ghostty" ]] && cp -r "$TMP_REPO/ghostty" "$HOME/.config/" && log "Copied ghostty config."
-[[ -d "$TMP_REPO/atuin" ]] && cp -r "$TMP_REPO/atuin" "$HOME/.config/" && log "Copied atuin config."
-[[ -f "$TMP_REPO/.zshrc" ]] && cp "$TMP_REPO/.zshrc" "$HOME/.zshrc" && log "Copied .zshrc."
+if [[ -d "$TMP_REPO/niri" ]]; then
+  cp -r "$TMP_REPO/niri" "$HOME/.config/"
+  log "Copied niri config."
+fi
+
+if [[ -d "$TMP_REPO/fastfetch" ]]; then
+  cp -r "$TMP_REPO/fastfetch" "$HOME/.config/"
+  log "Copied fastfetch config."
+fi
+
+if [[ -d "$TMP_REPO/ghostty" ]]; then
+  cp -r "$TMP_REPO/ghostty" "$HOME/.config/"
+  log "Copied ghostty config."
+fi
+
+if [[ -d "$TMP_REPO/atuin" ]]; then
+  cp -r "$TMP_REPO/atuin" "$HOME/.config/"
+  log "Copied atuin config."
+fi
+
+if [[ -f "$TMP_REPO/.zshrc" ]]; then
+  cp "$TMP_REPO/.zshrc" "$HOME/.zshrc"
+  log "Copied .zshrc."
+fi
 
 # ── 9. Completion Summary ───────────────────────────────────────────────
 log "Installation and optimization complete."
 cat <<EOF
 
 Summary of changes:
-  • Installed and enabled CachyOS repository.
+  • Installed and enabled CachyOS repository cleanly using 'cachyos-repo.sh'.
   • Installed linux-cachyos, cachyos-gaming-meta, and configured Limine to boot linux-cachyos by default.
   • Installed NVIDIA 580xx drivers FIRST to eliminate provider/package conflicts.
   • Configured 'nvidia-drm.modeset=1' across /etc/default/limine, /etc/kernel/cmdline, and active Limine config files.
