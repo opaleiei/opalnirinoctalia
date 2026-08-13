@@ -145,15 +145,38 @@ install_pkgs nvidia-580xx-dkms nvidia-580xx-utils lib32-nvidia-580xx-utils nvidi
 log "Installing cachyos-gaming-meta (NVIDIA drivers now set as graphics provider)..."
 install_pkgs cachyos-gaming-meta
 
-log "Configuring DRM kernel mode setting in mkinitcpio..."
-if ! grep -q "nvidia_drm" /etc/mkinitcpio.conf 2>/dev/null; then
-  sudo sed -i -E 's/^MODULES=\(([^)]*)\)/MODULES=(\1 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
-fi
+log "Configuring Btrfs and DRM kernel modules in mkinitcpio..."
+CURRENT_MODS=$(grep -E '^MODULES=\(' /etc/mkinitcpio.conf | sed -E 's/MODULES=\((.*)\)/\1/')
+NEW_MODS="$CURRENT_MODS"
+for mod in btrfs nvidia nvidia_modeset nvidia_uvm nvidia_drm; do
+  if ! echo "$NEW_MODS" | grep -qw "$mod"; then
+    NEW_MODS="$NEW_MODS $mod"
+  fi
+done
+NEW_MODS=$(echo "$NEW_MODS" | xargs)
+sudo sed -i -E "s/^MODULES=\(.*\)/MODULES=($NEW_MODS)/" /etc/mkinitcpio.conf
+
+log "Rebuilding initramfs for all kernels..."
 sudo mkinitcpio -P
 
-log "Ensuring nvidia-drm.modeset=1 is configured across Limine and Kernel cmdline..."
+log "Ensuring kernel parameters are configured across Limine and Kernel cmdline..."
 
-# 1. Update /etc/default/limine (read by limine-entry-tool / limine-mkinitcpio-hook)
+# 1. Capture current working kernel cmdline (including Btrfs subvolume info) to /etc/kernel/cmdline
+sudo mkdir -p /etc/kernel
+if [[ ! -f /etc/kernel/cmdline ]] || ! grep -q "root=" /etc/kernel/cmdline 2>/dev/null; then
+  if [[ -f /proc/cmdline ]]; then
+    CMDLINE_VAL=$(cat /proc/cmdline | sed -E 's/BOOT_IMAGE=[^ ]* //g')
+    echo "$CMDLINE_VAL" | sudo tee /etc/kernel/cmdline >/dev/null
+  fi
+fi
+
+if [[ -f /etc/kernel/cmdline ]]; then
+  if ! grep -q "nvidia-drm.modeset=1" /etc/kernel/cmdline; then
+    sudo sed -i 's/$/ nvidia-drm.modeset=1/' /etc/kernel/cmdline
+  fi
+fi
+
+# 2. Update /etc/default/limine (read by limine-entry-tool / limine-mkinitcpio-hook)
 sudo mkdir -p /etc/default
 if [[ ! -f /etc/default/limine ]]; then
   sudo tee /etc/default/limine >/dev/null <<EOF
@@ -169,19 +192,6 @@ else
   if ! grep -q "KERNEL_PRIORITY" /etc/default/limine; then
     echo 'KERNEL_PRIORITY=("linux-cachyos" "linux-zen" "linux-lts" "linux" "linux-hardened")' | sudo tee -a /etc/default/limine >/dev/null
   fi
-fi
-
-# 2. Update /etc/kernel/cmdline (standard systemd/limine kernel command line file)
-if [[ -f /etc/kernel/cmdline ]]; then
-  if ! grep -q "nvidia-drm.modeset=1" /etc/kernel/cmdline; then
-    sudo sed -i 's/$/ nvidia-drm.modeset=1/' /etc/kernel/cmdline
-  fi
-elif [[ -f /proc/cmdline ]]; then
-  CMDLINE_VAL=$(cat /proc/cmdline | sed 's/BOOT_IMAGE=[^ ]* //g')
-  if ! echo "$CMDLINE_VAL" | grep -q "nvidia-drm.modeset=1"; then
-    CMDLINE_VAL="$CMDLINE_VAL nvidia-drm.modeset=1"
-  fi
-  echo "$CMDLINE_VAL" | sudo tee /etc/kernel/cmdline >/dev/null
 fi
 
 # 3. Update active Limine configuration file directly on the boot partition
@@ -202,22 +212,6 @@ if [[ -n "$LIMINE_CFG" ]]; then
   if ! grep -q "nvidia-drm.modeset=1" "$LIMINE_CFG"; then
     sudo sed -i -E 's/^([[:space:]]*(kernel_)?cmdline.*)/\1 nvidia-drm.modeset=1/i' "$LIMINE_CFG"
   fi
-elif [[ -d /boot/loader/entries ]]; then
-  log "Adding nvidia-drm.modeset=1 to systemd-boot entries..."
-  for f in /boot/loader/entries/*.conf; do
-    [[ -f "$f" ]] || continue
-    if grep -q "^options" "$f" && ! grep -q "nvidia-drm.modeset=1" "$f"; then
-      sudo sed -i 's/^options \(.*\)$/options \1 nvidia-drm.modeset=1/' "$f"
-    fi
-  done
-elif [[ -f /etc/default/grub ]] && command -v grub-mkconfig >/dev/null 2>&1; then
-  log "Adding nvidia-drm.modeset=1 to GRUB..."
-  if ! grep -q "nvidia-drm.modeset=1" /etc/default/grub; then
-    sudo sed -i -E 's/^(GRUB_CMDLINE_LINUX_DEFAULT=")([^"]*)(")/\1\2 nvidia-drm.modeset=1\3/' /etc/default/grub
-  fi
-  sudo grub-mkconfig -o /boot/grub/grub.cfg
-else
-  warn "Could not locate bootloader configuration automatically."
 fi
 
 # ── 4. Core Desktop, Audio, Shell, Virtualization & Btrfs Stack ─────────
@@ -267,9 +261,9 @@ AUR_PKGS=(
 
 "$AUR_HELPER" -S --needed --noconfirm "${AUR_PKGS[@]}"
 
-# Trigger limine-update if limine-entry-tool / limine-mkinitcpio-hook was just installed
+# Trigger limine-update if limine-entry-tool / limine-mkinitcpio-hook was installed
 if command -v limine-update >/dev/null 2>&1; then
-  log "Rebuilding Limine entries with limine-update (which will set CachyOS as default)..."
+  log "Rebuilding Limine entries with limine-update..."
   sudo limine-update || warn "limine-update encountered an issue, check config manually."
 fi
 
@@ -385,19 +379,14 @@ log "Installation and optimization complete."
 cat <<EOF
 
 Summary of changes:
-  • Enabled [multilib] repository for 32-bit gaming dependency support.
-  • Installed CachyOS repository, linux-cachyos, and linux-cachyos-headers.
-  • Installed NVIDIA 580xx legacy drivers (both 64-bit and 32-bit) FIRST to satisfy GPU dependencies.
-  • Installed cachyos-gaming-meta without provider conflicts.
-  • Configured 'nvidia-drm.modeset=1' across /etc/default/limine, /etc/kernel/cmdline, and active Limine config files.
-  • Configured Snapper for root (/) and enabled snap-pac automatic pacman snapshots.
-  • Configured limine-snapper-sync and added //Snapshots marker to Limine boot config.
-  • Installed Docker & Docker Compose; added user to 'docker' group.
-  • Installed Virt-Manager & KVM stack; added user to 'libvirt' and 'kvm' groups.
-  • Configured system timezone (Asia/Bangkok) and locales (en_US, th_TH).
+  • Included Btrfs module in mkinitcpio MODULES so initramfs can mount Btrfs root subvolumes.
+  • Saved active root parameters to /etc/kernel/cmdline for Limine entries.
+  • Installed CachyOS repository, linux-cachyos kernel, and cachyos-gaming-meta.
+  • Installed NVIDIA 580xx drivers (64-bit + 32-bit).
+  • Configured Snapper for root (/) and enabled limine-snapper-sync.
   • Applied dotfiles for Niri, Fastfetch, Ghostty, Atuin, and Zsh.
 
 Next Steps:
-  1. Reboot the system to boot into the CachyOS kernel with full NVIDIA acceleration.
-  2. Verify kernel parameter after reboot: 'cat /proc/cmdline' (should show nvidia-drm.modeset=1 and linux-cachyos).
+  1. Reboot your system.
+  2. Select linux-cachyos in Limine—it will now boot cleanly into your Btrfs root.
 EOF
