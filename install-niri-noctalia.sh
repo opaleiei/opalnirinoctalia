@@ -160,57 +160,64 @@ log "Rebuilding initramfs for all kernels..."
 sudo mkinitcpio -P
 
 # ── 3b. Resolve Limine Config Conflicts & Set Kernel Parameters ──────────
-log "Resolving Limine configuration conflicts and fixing root mounts..."
+log "Resolving Limine configuration conflicts and fixing root parameters..."
 
-# 1. Capture exact root filesystem UUID and Btrfs subvolume from the active mount
-ROOT_DEV=$(findmnt -n -o SOURCE / 2>/dev/null || true)
-ROOT_UUID=$(blkid -s UUID -o value "$ROOT_DEV" 2>/dev/null || true)
-ROOT_SUBVOL=$(findmnt -n -o OPTIONS / 2>/dev/null | tr ',' '\n' | grep '^subvol=' | head -n 1 || true)
-
+# 1. Capture exact working kernel cmdline (including root UUID & Btrfs subvolume)
 CMDLINE_STRING=""
-if [[ -n "$ROOT_UUID" ]]; then
-  CMDLINE_STRING="root=UUID=$ROOT_UUID"
+if [[ -f /proc/cmdline ]]; then
+  CMDLINE_STRING=$(cat /proc/cmdline | sed -E 's/BOOT_IMAGE=[^ ]* //g')
+  if ! echo "$CMDLINE_STRING" | grep -q "nvidia-drm.modeset=1"; then
+    CMDLINE_STRING="$CMDLINE_STRING nvidia-drm.modeset=1"
+  fi
 fi
-if [[ -n "$ROOT_SUBVOL" ]]; then
-  CMDLINE_STRING="$CMDLINE_STRING $ROOT_SUBVOL"
-fi
-CMDLINE_STRING="$CMDLINE_STRING rw nvidia-drm.modeset=1"
 
-log "Writing accurate kernel command line to /etc/kernel/cmdline ($CMDLINE_STRING)..."
+if [[ -z "$CMDLINE_STRING" || ! "$CMDLINE_STRING" =~ root= ]]; then
+  ROOT_DEV=$(findmnt -n -o SOURCE / 2>/dev/null || true)
+  ROOT_UUID=$(blkid -s UUID -o value "$ROOT_DEV" 2>/dev/null || true)
+  ROOT_SUBVOL=$(findmnt -n -o OPTIONS / 2>/dev/null | tr ',' '\n' | grep '^subvol=' | head -n 1 || true)
+  
+  CMDLINE_STRING="root=UUID=$ROOT_UUID"
+  [[ -n "$ROOT_SUBVOL" ]] && CMDLINE_STRING="$CMDLINE_STRING rootflags=$ROOT_SUBVOL"
+  CMDLINE_STRING="$CMDLINE_STRING rw nvidia-drm.modeset=1"
+fi
+
+log "Writing complete kernel parameters to /etc/kernel/cmdline:"
+log "  -> $CMDLINE_STRING"
+sudo mkdir -p /etc/kernel
 echo "$CMDLINE_STRING" | sudo tee /etc/kernel/cmdline >/dev/null
 
-# 2. Update /etc/default/limine
+# 2. Update /etc/default/limine (do NOT override KERNEL_CMDLINE so it reads /etc/kernel/cmdline)
 sudo mkdir -p /etc/default
 sudo tee /etc/default/limine >/dev/null <<EOF
 LIMIT_USAGE_PERCENT=85
 MAX_SNAPSHOT_ENTRIES=auto
-KERNEL_CMDLINE[default]+=" nvidia-drm.modeset=1"
 KERNEL_PRIORITY=("linux-cachyos" "linux-zen" "linux-lts" "linux" "linux-hardened")
 EOF
 
-# 3. Detect ALL Limine config files in /boot and remove duplicate entries to stop conflicts
-mapfile -t FOUND_LIMINE_CFGS < <(sudo find /boot -type f \( -name "limine.conf" -o -name "limine.cfg" -o -name "limine.config" \) 2>/dev/null || true)
+# 3. Clean up conflicting Limine config files across /boot
+log "Scanning for conflicting Limine config files in /boot..."
+mapfile -t ALL_LIMINE_CFGS < <(sudo find /boot -type f \( -name "limine.conf" -o -name "limine.cfg" -o -name "limine.config" \) 2>/dev/null || true)
 
-PRIMARY_LIMINE_CFG=""
-if [[ ${#FOUND_LIMINE_CFGS[@]} -gt 0 ]]; then
-  # Standardize on the first discovered config file as primary
-  PRIMARY_LIMINE_CFG="${FOUND_LIMINE_CFGS[0]}"
-  log "Selected primary Limine configuration: $PRIMARY_LIMINE_CFG"
-
-  # If more than 1 config file exists (e.g., both /boot/EFI/BOOT/limine.conf and /boot/EFI/arch-limine/limine.config)
-  # remove extras so limine-update / limine-entry-tool does not fail due to duplicate configs.
-  if [[ ${#FOUND_LIMINE_CFGS[@]} -gt 1 ]]; then
-    log "Cleaning up redundant Limine configuration files to prevent conflicts..."
-    for duplicate in "${FOUND_LIMINE_CFGS[@]:1}"; do
-      log "Removing conflicting duplicate config: $duplicate"
-      sudo rm -f "$duplicate"
-    done
+if [[ ! -f /boot/limine.conf ]]; then
+  if [[ ${#ALL_LIMINE_CFGS[@]} -gt 0 ]]; then
+    log "Migrating ${ALL_LIMINE_CFGS[0]} to /boot/limine.conf..."
+    sudo cp "${ALL_LIMINE_CFGS[0]}" /boot/limine.conf
+  else
+    log "Creating new /boot/limine.conf..."
+    sudo touch /boot/limine.conf
   fi
+fi
 
-  # Ensure the primary Limine config has nvidia-drm.modeset=1
-  if ! grep -q "nvidia-drm.modeset=1" "$PRIMARY_LIMINE_CFG"; then
-    sudo sed -i -E 's/^([[:space:]]*(kernel_)?cmdline.*)/\1 nvidia-drm.modeset=1/i' "$PRIMARY_LIMINE_CFG"
+for cfg_file in "${ALL_LIMINE_CFGS[@]}"; do
+  if [[ "$cfg_file" != "/boot/limine.conf" ]]; then
+    log "Removing conflicting duplicate config file: $cfg_file"
+    sudo rm -f "$cfg_file"
   fi
+done
+
+if ! grep -q "//Snapshots" /boot/limine.conf 2>/dev/null && ! grep -q "/Snapshots" /boot/limine.conf 2>/dev/null; then
+  log "Adding //Snapshots marker to /boot/limine.conf..."
+  echo -e "\n//Snapshots" | sudo tee -a /boot/limine.conf >/dev/null
 fi
 
 # ── 4. Core Desktop, Audio, Shell, Virtualization & Btrfs Stack ─────────
@@ -260,10 +267,16 @@ AUR_PKGS=(
 
 "$AUR_HELPER" -S --needed --noconfirm "${AUR_PKGS[@]}"
 
-# Trigger limine-update cleanly after extra hooks/kernels are installed
+# Re-deploy Limine bootloader EFI binary to ensure boot NVRAM targets /boot/limine.conf
+if command -v limine-install >/dev/null 2>&1; then
+  log "Deploying Limine EFI bootloader..."
+  sudo limine-install || warn "limine-install completed with warnings."
+  sudo limine-install --fallback 2>/dev/null || true
+fi
+
 if command -v limine-update >/dev/null 2>&1; then
-  log "Rebuilding Limine entries with limine-update..."
-  sudo limine-update || warn "limine-update encountered an issue, verify boot configuration manually."
+  log "Updating Limine entries for /boot/limine.conf..."
+  sudo limine-update || warn "limine-update encountered an issue, check config manually."
 fi
 
 # ── 6. Snapper & Limine Snapshot Integration (Btrfs @root) ───────────────
@@ -277,24 +290,13 @@ if [[ ! -f /etc/snapper/configs/root ]]; then
   sudo snapper -c root create-config /
 fi
 
-# Set permissions for wheel group
 sudo chmod 750 /.snapshots 2>/dev/null || true
 sudo chown root:wheel /.snapshots 2>/dev/null || true
 sudo sed -i 's/^ALLOW_GROUPS=""/ALLOW_GROUPS="wheel"/' /etc/snapper/configs/root
 sudo sed -i 's/^SYNC_USER="no"/SYNC_USER="yes"/' /etc/snapper/configs/root
 
-# Enable Snapper automatic timeline and cleanup services
 sudo systemctl enable snapper-timeline.timer snapper-cleanup.timer
 
-# Ensure Limine config has the snapshot marker //Snapshots for limine-snapper-sync
-if [[ -n "$PRIMARY_LIMINE_CFG" && -f "$PRIMARY_LIMINE_CFG" ]]; then
-  if ! grep -q "//Snapshots" "$PRIMARY_LIMINE_CFG" && ! grep -q "/Snapshots" "$PRIMARY_LIMINE_CFG"; then
-    log "Adding //Snapshots marker to $PRIMARY_LIMINE_CFG for Limine snapshot sync..."
-    echo -e "\n//Snapshots" | sudo tee -a "$PRIMARY_LIMINE_CFG" >/dev/null
-  fi
-fi
-
-# Enable Limine Snapper Sync watcher service
 if systemctl list-unit-files | grep -q "limine-snapper-sync.service"; then
   log "Enabling limine-snapper-sync service..."
   sudo systemctl enable limine-snapper-sync.service
@@ -310,12 +312,10 @@ sudo systemctl enable libvirtd.service
 log "Adding user ($USER) to docker, libvirt, and kvm groups..."
 sudo usermod -aG docker,libvirt,kvm "$USER"
 
-# Configure libvirt default network
 if command -v virsh >/dev/null 2>&1; then
   sudo virsh net-autostart default 2>/dev/null || true
 fi
 
-# Configure Greetd + Noctalia Greeter
 GREETER_SESSION_BIN="$(command -v noctalia-greeter-session || true)"
 if [[ -n "$GREETER_SESSION_BIN" ]]; then
   log "Configuring greetd with Noctalia Greeter..."
@@ -377,15 +377,15 @@ fi
 log "Installation complete."
 cat <<EOF
 
-Summary of changes:
-  • Extracted exact root UUID ($ROOT_UUID) and subvolume ($ROOT_SUBVOL) into /etc/kernel/cmdline to fix the Btrfs root mount error.
-  • Resolved duplicate Limine config conflicts by retaining one primary config ($PRIMARY_LIMINE_CFG).
+Summary of fixes & changes applied:
+  • Extracted exact root UUID & Btrfs flags into /etc/kernel/cmdline.
+  • Eliminated duplicate Limine configs across /boot, standardizing on /boot/limine.conf.
   • Added 'btrfs' to mkinitcpio MODULES and rebuilt initramfs images.
-  • Installed CachyOS repository, linux-cachyos kernel, and 64-bit/32-bit NVIDIA 580xx drivers.
-  • Configured Snapper for root (/) and enabled limine-snapper-sync.
+  • Re-deployed Limine EFI bootloader via 'limine-install'.
+  • Installed CachyOS repository, linux-cachyos kernel, and 64-bit/32-bit NVIDIA drivers.
   • Applied dotfiles for Niri, Fastfetch, Ghostty, Atuin, and Zsh.
 
 Next Steps:
   1. Reboot your system.
-  2. Select linux-cachyos in Limine—it will now mount your Btrfs root subvolume properly without dropping into emergency shell.
+  2. Select 'linux-cachyos' in Limine—it will now mount your Btrfs root cleanly without dropping into emergency shell.
 EOF
