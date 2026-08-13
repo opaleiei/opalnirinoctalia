@@ -95,7 +95,7 @@ if ! grep -q "^\[cachyos\]" /etc/pacman.conf 2>/dev/null; then
   rm -rf "$tmp_cachy"
   sudo pacman -Sy
 else
-  log "CachyOS repository already enabled."
+  log "Chaotic-AUR already enabled."
 fi
 
 # ── 2. AUR Helper Setup (paru / yay) ────────────────────────────────────
@@ -128,18 +128,11 @@ install_pkgs() {
 log "Installing linux-cachyos kernel and headers..."
 sudo pacman -S --needed --noconfirm linux-cachyos linux-cachyos-headers
 
-log "Installing NVIDIA 580xx legacy drivers (64-bit + 32-bit) FIRST..."
-NVIDIA_HEADERS_INSTALLED=0
-for k in linux-cachyos linux linux-lts linux-zen linux-hardened; do
-  if pacman -Qq "$k" &>/dev/null; then
-    sudo pacman -S --needed --noconfirm "${k}-headers"
-    NVIDIA_HEADERS_INSTALLED=1
-  fi
-done
-if [[ $NVIDIA_HEADERS_INSTALLED -eq 0 ]]; then
-  warn "Could not detect active kernel package automatically for headers."
-fi
+# Clean up standalone EFI UKI files (/EFI/Linux/arch-linux.efi) that cause the duplicate EFI entry
+log "Removing standalone EFI UKI files (/boot/EFI/Linux/arch-linux.efi)..."
+sudo rm -rf /boot/EFI/Linux/*.efi /boot/efi/EFI/Linux/*.efi 2>/dev/null || true
 
+log "Installing NVIDIA 580xx legacy drivers (64-bit + 32-bit)..."
 install_pkgs nvidia-580xx-dkms nvidia-580xx-utils lib32-nvidia-580xx-utils nvidia-580xx-settings
 
 log "Installing cachyos-gaming-meta..."
@@ -156,13 +149,13 @@ done
 NEW_MODS=$(echo "$NEW_MODS" | xargs)
 sudo sed -i -E "s/^MODULES=\(.*\)/MODULES=($NEW_MODS)/" /etc/mkinitcpio.conf
 
-log "Rebuilding initramfs for all kernels..."
+log "Rebuilding initramfs for installed kernels..."
 sudo mkinitcpio -P
 
 # ── 3b. Resolve Limine Config Conflicts & Set Kernel Parameters ──────────
 log "Resolving Limine configuration conflicts and fixing root parameters..."
 
-# 1. Capture exact working kernel cmdline (including root UUID & Btrfs subvolume)
+# Capture exact working kernel cmdline (including root UUID & Btrfs subvolume)
 CMDLINE_STRING=""
 if [[ -f /proc/cmdline ]]; then
   CMDLINE_STRING=$(cat /proc/cmdline | sed -E 's/BOOT_IMAGE=[^ ]* //g')
@@ -186,7 +179,7 @@ log "  -> $CMDLINE_STRING"
 sudo mkdir -p /etc/kernel
 echo "$CMDLINE_STRING" | sudo tee /etc/kernel/cmdline >/dev/null
 
-# 2. Update /etc/default/limine (do NOT override KERNEL_CMDLINE so it reads /etc/kernel/cmdline)
+# Update /etc/default/limine with linux-cachyos first in priority
 sudo mkdir -p /etc/default
 sudo tee /etc/default/limine >/dev/null <<EOF
 LIMIT_USAGE_PERCENT=85
@@ -194,7 +187,7 @@ MAX_SNAPSHOT_ENTRIES=auto
 KERNEL_PRIORITY=("linux-cachyos" "linux-zen" "linux-lts" "linux" "linux-hardened")
 EOF
 
-# 3. Clean up conflicting Limine config files across /boot
+# Clean up conflicting Limine config files across /boot
 log "Scanning for conflicting Limine config files in /boot..."
 mapfile -t ALL_LIMINE_CFGS < <(sudo find /boot -type f \( -name "limine.conf" -o -name "limine.cfg" -o -name "limine.config" \) 2>/dev/null || true)
 
@@ -377,15 +370,12 @@ fi
 log "Installation complete."
 cat <<EOF
 
-Summary of fixes & changes applied:
-  • Extracted exact root UUID & Btrfs flags into /etc/kernel/cmdline.
-  • Eliminated duplicate Limine configs across /boot, standardizing on /boot/limine.conf.
-  • Added 'btrfs' to mkinitcpio MODULES and rebuilt initramfs images.
-  • Re-deployed Limine EFI bootloader via 'limine-install'.
-  • Installed CachyOS repository, linux-cachyos kernel, and 64-bit/32-bit NVIDIA drivers.
-  • Applied dotfiles for Niri, Fastfetch, Ghostty, Atuin, and Zsh.
+Summary of changes:
+  • Deleted /boot/EFI/Linux/*.efi to remove the separate /Arch Linux (linux) UKI menu entry.
+  • Configured KERNEL_PRIORITY so linux-cachyos is listed first and selected by default in Limine.
+  • Applied full system updates, NVIDIA 580xx drivers, Snapper snapshot sync, and dotfiles.
 
 Next Steps:
   1. Reboot your system.
-  2. Select 'linux-cachyos' in Limine—it will now mount your Btrfs root cleanly without dropping into emergency shell.
+  2. Limine will select 'linux-cachyos' as the default boot entry.
 EOF
