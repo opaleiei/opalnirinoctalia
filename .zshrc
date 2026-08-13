@@ -20,7 +20,7 @@ alias ll='eza -l --icons --group-directories-first'
 alias la='eza -la --icons --group-directories-first'
 alias tree='eza --tree --icons'
 alias cat='bat'
-
+alias cd='z'
 # dimmer/brighter suggestion color
 ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=#5f5f5f'
 
