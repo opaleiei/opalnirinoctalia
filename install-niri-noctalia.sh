@@ -175,7 +175,7 @@ if [[ -z "$CMDLINE_STRING" || ! "$CMDLINE_STRING" =~ root= ]]; then
   ROOT_DEV=$(findmnt -n -o SOURCE / 2>/dev/null || true)
   ROOT_UUID=$(blkid -s UUID -o value "$ROOT_DEV" 2>/dev/null || true)
   ROOT_SUBVOL=$(findmnt -n -o OPTIONS / 2>/dev/null | tr ',' '\n' | grep '^subvol=' | head -n 1 || true)
-  
+
   CMDLINE_STRING="root=UUID=$ROOT_UUID"
   [[ -n "$ROOT_SUBVOL" ]] && CMDLINE_STRING="$CMDLINE_STRING rootflags=$ROOT_SUBVOL"
   CMDLINE_STRING="$CMDLINE_STRING rw nvidia-drm.modeset=1"
@@ -229,14 +229,14 @@ OFFICIAL_PKGS=(
   networkmanager network-manager-applet brightnessctl playerctl
   wl-clipboard cliphist grim slurp ttf-nerd-fonts-symbols noto-fonts
   jemalloc dbus accountsservice greetd papirus-icon-theme ddcutil
-  
-  # Shell & CLI Utilities
+
+  # Shell, Plugins & Modern CLI Stack
   zsh starship zsh-autosuggestions zsh-syntax-highlighting zsh-completions
-  zsh-history-substring-search fzf zoxide eza bat atuin
-  
+  zsh-history-substring-search fzf zoxide eza bat ripgrep fd lazygit yazi atuin
+
   # Docker Stack
   docker docker-compose
-  
+
   # Virt-Manager / KVM Virtualization Stack
   virt-manager qemu-desktop libvirt edk2-ovmf dnsmasq iptables-nft dmidecode bridge-utils
 
@@ -256,6 +256,7 @@ AUR_PKGS=(
   fastfetch-git
   bibata-cursor-theme
   fzf-tab
+  zsh-autopair
   zen-browser-bin
   zed
   ffmpeg4.4
@@ -279,7 +280,7 @@ if command -v limine-update >/dev/null 2>&1; then
   sudo limine-update || warn "limine-update encountered an issue, check config manually."
 fi
 
-# ── 6. Snapper & Limine Snapshot Integration (Btrfs @root) ───────────────
+# ── 6. Snapper & Limine Snapshot Integration (Btrfs @root) ─────────────
 log "Configuring Snapper for root (/) and Limine snapshot sync..."
 
 if [[ ! -f /etc/snapper/configs/root ]]; then
@@ -342,7 +343,7 @@ BROWSERS=("zen-browser")
 EOF
 systemctl --user enable psd.service 2>/dev/null || warn "User systemd bus not running; enable psd.service manually after rebooting."
 
-# ── 8. Fetch Dotfiles from Repository ──────────────────────────────────
+# ── 8. Fetch Dotfiles from Repository ───────────────────────────────────
 log "Cloning dotfiles repository..."
 TMP_REPO=$(mktemp -d)
 git clone --depth 1 https://github.com/opaleiei/opalnirinoctalia.git "$TMP_REPO"
@@ -368,6 +369,11 @@ if [[ -d "$TMP_REPO/atuin" ]]; then
   log "Copied atuin config."
 fi
 
+if [[ -f "$TMP_REPO/starship.toml" ]]; then
+  cp "$TMP_REPO/starship.toml" "$HOME/.config/starship.toml"
+  log "Copied starship config."
+fi
+
 if [[ -f "$TMP_REPO/.zshrc" ]]; then
   cp "$TMP_REPO/.zshrc" "$HOME/.zshrc"
   log "Copied .zshrc."
@@ -383,7 +389,8 @@ Summary of fixes & changes applied:
   • Added 'btrfs' to mkinitcpio MODULES and rebuilt initramfs images.
   • Re-deployed Limine EFI bootloader via 'limine-install'.
   • Installed CachyOS repository, linux-cachyos kernel, and 64-bit/32-bit NVIDIA drivers.
-  • Applied dotfiles for Niri, Fastfetch, Ghostty, Atuin, and Zsh.
+  • Installed high-performance Zsh shell stack, plugins, and CLI tools.
+  • Applied dotfiles for Niri, Fastfetch, Ghostty, Atuin, Starship, and Zsh.
 
 Next Steps:
   1. Reboot your system.
