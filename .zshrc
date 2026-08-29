@@ -65,11 +65,14 @@ if [[ -f /usr/share/zsh/plugins/zsh-autopair/autopair.zsh ]]; then
   autopair-init
 fi
 
-# zsh-autosuggestions: fish-like suggestions as you type
-if [[ -f /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
-  source /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
-  ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=#5f5f5f'
-  ZSH_AUTOSUGGEST_STRATEGY=(history completion)
+# Autosuggestions: Prioritize 'deja' (intelligent predictive daemon)
+# If deja is NOT installed, fallback to classic zsh-autosuggestions to prevent widget conflicts
+if ! command -v deja &>/dev/null; then
+  if [[ -f /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
+    source /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
+    ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=#5f5f5f'
+    ZSH_AUTOSUGGEST_STRATEGY=(history completion)
+  fi
 fi
 
 # zsh-history-substring-search: search matching history with Up/Down arrows
@@ -112,9 +115,13 @@ if command -v atuin &>/dev/null; then
   eval "$(atuin init zsh --disable-up-arrow)"
 fi
 
-# Deja (if installed)
+# Deja (Predictive inline shell autosuggestions - loaded after syntax highlighting)
 if command -v deja &>/dev/null; then
-  eval "$(deja init zsh)"
+  if [[ -r "$HOME/.local/share/deja/init.zsh" ]]; then
+    source "$HOME/.local/share/deja/init.zsh"
+  else
+    eval "$(deja init zsh)"
+  fi
 fi
 
 # ==============================================================================
